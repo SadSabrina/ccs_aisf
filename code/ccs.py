@@ -36,10 +36,12 @@ class CCS(object):
     Hyperparams:
     -----------------------------
     x0, x1 : np.ndarray
-
         Inputs: (x0) negation of that statement and the statement (x1)
         Example: x1 — Cats are mammals. Yes. 
                  x0 — Cats are mammals. No.
+        
+    !!!! Must be normalized after extraction with a formula x0 - x0.mean(0), x1-x1.mean(0)
+
     y_train : np.ndarray или None
         True labels for binary classification.
     nepochs : int, default=1500
@@ -234,6 +236,10 @@ def train_lr_on_hidden_states(X_pos, X_neg, y_vec, train_idx, test_idx, random_s
     Parameters:
         X_pos (np.ndarray): Positive statements shape (N, n_layers, hidden_dim).
         X_neg (np.ndarray): Negatize statements, shape (N, n_layers, hidden_dim).
+        
+        !!!! Must be NOT normalized after extraction
+
+        y_vec (np.ndarray): y labels
         train_idx (np.ndarray): train indexes
         test_idx (np.ndarray): test indexes
 
@@ -284,5 +290,89 @@ def train_lr_on_hidden_states(X_pos, X_neg, y_vec, train_idx, test_idx, random_s
         # Save results
         results[layer_idx] = {'Accuracy' : acc,
                               'Silhouette' : s_score}
+
+    return results
+
+def train_ccs_on_hidden_states(X_pos, X_neg, y_vec, train_idx, 
+                               test_idx, random_state=71, lambda_classification=0.0, normalize=True):
+    """
+    Train CCS for each layer and get results 
+
+    Parameters:
+        X_pos (np.ndarray): Positive (yes) samples, shape (N, n_layers, hidden_dim). Must be raw (not normalized after extraction)
+        X_neg (np.ndarray): Negative (no) samples, shape (N, n_layers, hidden_dim). Must be raw (not normalized after extraction)
+        y_vec (np.ndarray): y labels 
+        train_idx (np.ndarray): train indexes
+        test_idx (np.ndarray): test indexes
+
+        random_state (int): Random seed.
+        lambda_classification (float): BCE weight
+        
+        normalize (bool): if True then training data normalized with formula X - X.mean(0) else raw data is used 
+        (only if you have normalization before)
+
+    Returns:
+        results (dict): dict {layer number: {'accuracy': ccs_acc,
+                              'silhouette' : s_score,
+                              'agreement' : ccs_agreement,
+                              'contradiction idx' : ccs_ci,
+                              'IM dist': ccs_ideal_dist}
+ }.
+    """
+    n_samples, n_layers, hidden_dim = X_pos.shape
+    results = {}
+
+    if normalize:
+        X_pos = X_pos - X_pos.mean(0)
+        X_neg = X_neg - X_neg.mean(0)
+
+
+    for layer_idx in range(n_layers):
+
+        # X positive (yes)
+        X_pos_train_layer = X_pos[train_idx, layer_idx, :]# (train_samples, hidden_dim)
+        X_pos_test_layer = X_pos[test_idx, layer_idx, :]
+
+        # X negative (no)
+        X_neg_train_layer = X_neg[train_idx, layer_idx, :]
+        X_neg_test_layer = X_neg[test_idx, layer_idx, :]
+
+        # y vector
+        y_train = y_vec[train_idx]
+        y_test = y_vec[test_idx]
+
+        ccs = CCS(X_neg_train_layer, X_pos_train_layer, y_train.values, var_normalize=False, lambda_classification=lambda_classification)
+        ccs.repeated_train()
+
+        # Оценка
+        predictions, conf = ccs.predict(X_neg_test_layer, X_pos_test_layer, y_test.values)
+        if len(np.unique(predictions)) == 1:
+          s_score = 0
+        else:
+          s_score = ccs.get_silhouette(X_neg_test_layer, X_pos_test_layer, y_test.values)
+        ccs_acc = ccs.get_acc(X_neg_test_layer, X_pos_test_layer, y_test.values)
+
+        print(f"Layer {layer_idx}/{n_layers}, CCS accuracy: {ccs_acc}")
+
+        # Probas
+        A_idx = test_idx[test_idx <= 514/2]
+        notA_idx = (A_idx + n_samples/2).astype(int)
+
+        A0_test = X_neg[A_idx, layer_idx, :]
+        A1_test = X_pos[A_idx, layer_idx, :]
+
+        notA0_test = X_neg[notA_idx, layer_idx, :]
+        notA1_test = X_pos[notA_idx, layer_idx, :]
+
+        ccs_agreement = ccs.get_agreement(A0_test, A1_test, notA0_test, notA1_test)
+        ccs_ci = ccs.get_contradiction_idx(A0_test, A1_test, notA0_test, notA1_test)
+        ccs_ideal_dist = ccs.get_ideal_distance(A0_test, A1_test, notA0_test, notA1_test)
+
+        # Save result
+        results[layer_idx] = {'accuracy': ccs_acc,
+                              'silhouette' : s_score,
+                              'agreement' : ccs_agreement,
+                              'contradiction idx' : ccs_ci,
+                              'IM dist': ccs_ideal_dist}
 
     return results
