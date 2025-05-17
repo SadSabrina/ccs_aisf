@@ -33,7 +33,12 @@ def plot_pca_or_tsne_layerwise(X_pos, X_neg, hue, standardize=True, reshape= Non
 
     n_layers = X_pos.shape[1]
 
-    fig, axes = plt.subplots((n_layers - 1)//6, 6, figsize=(24, 13))
+
+    try:
+      fig, axes = plt.subplots((n_layers - 1)//6 + 1, 6, figsize=(24, 13))
+    except:
+      fig, axes = plt.subplots((n_layers - 1)//6 + 1 + 1, 6, figsize=(24, 13))
+
     axes = axes.flatten()  
 
 
