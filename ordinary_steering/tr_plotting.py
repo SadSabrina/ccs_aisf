@@ -2,11 +2,9 @@ import os
 
 import matplotlib.pyplot as plt
 import numpy as np
-import pandas as pd
 import seaborn as sns
 import torch
 from sklearn.decomposition import PCA
-from sklearn.manifold import TSNE
 
 # Set the style for all plots
 plt.style.use("seaborn-v0_8-whitegrid")
@@ -22,665 +20,125 @@ CUSTOM_PALETTE = {
 }
 
 
-def safe_pca_transform(data, n_components=2):
-    """Perform PCA with numerical stability checks"""
-    # Convert to numpy if tensor
-    if torch.is_tensor(data):
-        data = data.detach().cpu().numpy()
-
-    # Check for NaN or Inf values and replace them
-    if np.any(np.isnan(data)) or np.any(np.isinf(data)):
-        data = np.nan_to_num(data, nan=0.0, posinf=1e6, neginf=-1e6)
-
-    # Center the data with numerical stability
-    mean = np.mean(data, axis=0)
-    centered = data - mean
-
-    # Scale the data with numerical stability
-    std = np.std(centered, axis=0)
-    std = np.where(std < 1e-10, 1.0, std)
-    scaled = centered / std
-
-    # Clip values to prevent overflow
-    scaled = np.clip(scaled, -1e6, 1e6)
-
-    # Check for NaN or Inf values again after scaling
-    if np.any(np.isnan(scaled)) or np.any(np.isinf(scaled)):
-        scaled = np.nan_to_num(scaled, nan=0.0, posinf=1e6, neginf=-1e6)
-
-    # Apply PCA with full SVD solver for better numerical stability
-    pca = PCA(n_components=n_components, svd_solver="full")
-
-    # Add small epsilon to diagonal for numerical stability
-    scaled = scaled + np.eye(scaled.shape[0], scaled.shape[1]) * 1e-10
-
-    transformed = pca.fit_transform(scaled)
-
-    # Final check for NaN or Inf values
-    if np.any(np.isnan(transformed)) or np.any(np.isinf(transformed)):
-        transformed = np.nan_to_num(transformed, nan=0.0, posinf=1e6, neginf=-1e6)
-
-    return transformed
-
-
-def plot_pca_or_tsne_layerwise(
-    X_pos,
-    X_neg,
-    hue,
-    standardize=True,
-    reshape=None,
-    n_components=5,
-    components=None,
-    mode="pca",
-    plot_title=None,
-    save_path=None,
-):
-    """
-    PCA or T-SNE-clustering for each hidden layer plot
-
-    Parameters:
-        X_pos (np.ndarray): Positive (yes) samples, shape (n_samples, n_layers, hidden_dim)
-        X_neg (np.ndarray): Negative (no) samples, shape (n_samples, n_layers, hidden_dim)
-        hue (np.ndarray): Labels for coloring points
-        standardize (bool): If standardization is needed before PCA
-        reshape (list): If data needs reshaping
-        n_components (int): Number of PCA/TSNE components
-        components (list): 2 components to plot
-        mode (str): 'pca' or 'tsne'
-        plot_title (str): Figure suptitle
-        save_path (str): Path to save the plot
-    """
-    if components is None:
-        components = [0, 1]
-
-    if len(X_pos.shape) == 2:
-        if reshape is None:
-            raise ValueError("reshape parameter required when input is 2D")
-        X_pos = X_pos.reshape(reshape[0], reshape[1], -1)
-        X_neg = X_neg.reshape(reshape[0], reshape[1], -1)
-
-    n_layers = X_pos.shape[1]
-
-    try:
-        fig, axes = plt.subplots((n_layers - 1) // 6 + 1, 6, figsize=(24, 13))
-    except:
-        fig, axes = plt.subplots((n_layers - 1) // 6 + 1 + 1, 6, figsize=(24, 13))
-
-    axes = axes.flatten()
-
-    for layer_idx in range(1, n_layers):
-        ax = axes[layer_idx - 1]
-
-        X_pos_layer = X_pos[:, layer_idx, :]
-        X_neg_layer = X_neg[:, layer_idx, :]
-
-        # Combining hidden states
-        states_data = X_pos_layer - X_neg_layer
-
-        # Standardization
-        if standardize:
-            states_data = (states_data - states_data.mean(axis=0)) / (
-                states_data.std(axis=0) + 1e-10
-            )
-
-        if mode == "pca":
-            projector = PCA(n_components=n_components)
-        elif mode == "tsne":
-            projector = TSNE(n_components=n_components, metric="cosine")
-        else:
-            raise ValueError("mode must be 'pca' or 'tsne'")
-
-        X_proj = projector.fit_transform(states_data)
-
-        # Plot
-        sns.scatterplot(
-            data=pd.DataFrame(X_proj),
-            x=X_proj[:, components[0]],
-            y=X_proj[:, components[1]],
-            hue=hue,
-            ax=ax,
-        )
-        ax.set_title(f"Layer {layer_idx}", fontsize=10)
-        ax.legend().set_visible(False)
-        ax.set_xticks([])
-        ax.set_yticks([])
-        ax.grid(True)
-
-    for idx in range(n_layers, len(axes)):
-        axes[idx].axis("off")
-
-    # Legend
-    handles, labels = axes[0].get_legend_handles_labels()
-    fig.legend(handles, labels, loc="upper right", fontsize=12)
-
-    if plot_title:
-        fig.suptitle(plot_title, fontsize=16)
-
-    if save_path:
-        fig.savefig(save_path, dpi=300, bbox_inches="tight")
-
-    return fig
-
-
-def plot_all_steering_vectors(
-    results,
-    hate_vectors=None,
-    safe_vectors=None,
-    log_base=None,
-    all_steering_vectors=None,
-    hate_types=None,
-    safe_types=None,
-):
-    """
-    Plot all steering vectors across layers.
-
-    Args:
-        results: List of dicts, each with keys 'hate_mean_vector', 'safe_mean_vector', 'steering_vector'
-        hate_vectors: List of arrays, each with shape (n_samples, 1, 768) or (n_samples, 768)
-        safe_vectors: List of arrays, each with shape (n_samples, 1, 768) or (n_samples, 768)
-        log_base: Base path for saving the plot
-        all_steering_vectors: Dict of different steering vectors with their properties
-        hate_types: List of types for hate vectors
-        safe_types: List of types for safe vectors
-    """
-    n_layers = len(results)
-    fig, axes = plt.subplots(n_layers, 1, figsize=(12, 6 * n_layers))
-
-    # Handle single layer case
-    if n_layers == 1:
-        axes = [axes]
-
-    # Define colors and markers for each category
-    category_styles = {
-        "hate_yes": {
-            "color": "#FF0000",  # Bright red
-            "marker": "o",
-            "label": "Hate (Yes)",
-        },
-        "hate_no": {
-            "color": "#0066CC",  # Medium blue
-            "marker": "s",
-            "label": "Hate (No)",
-        },
-        "safe_yes": {
-            "color": "#3399FF",  # Light blue
-            "marker": "^",
-            "label": "Safe (Yes)",
-        },
-        "safe_no": {
-            "color": "#CC0000",  # Dark red
-            "marker": "v",
-            "label": "Safe (No)",
-        },
-    }
-
-    for layer_idx in range(n_layers):
-        layer_data = results[layer_idx]
-        ax = axes[layer_idx]
-
-        # Get vectors and ensure correct shapes
-        hate_mean_vector = layer_data["hate_mean_vector"]
-        safe_mean_vector = layer_data["safe_mean_vector"]
-        steering_vector = layer_data["steering_vector"]
-
-        # Print shapes for debugging
-        print(
-            f"Layer {layer_idx} vector shapes - hate_mean: {hate_mean_vector.shape}, "
-            f"safe_mean: {safe_mean_vector.shape}, steering: {steering_vector.shape}"
-        )
-
-        # Plot all data points if provided
-        if hate_vectors is not None and safe_vectors is not None:
-            # Get layer-specific vectors
-            layer_hate_vectors = hate_vectors[layer_idx]
-            layer_safe_vectors = safe_vectors[layer_idx]
-
-            print(
-                f"Layer {layer_idx} data shapes - hate: {layer_hate_vectors.shape}, safe: {layer_safe_vectors.shape}"
-            )
-
-            # Reshape vectors if they're 3D
-            if len(layer_hate_vectors.shape) == 3:
-                hate_vectors_2d = layer_hate_vectors.reshape(
-                    layer_hate_vectors.shape[0], -1
-                )
-                safe_vectors_2d = layer_safe_vectors.reshape(
-                    layer_safe_vectors.shape[0], -1
-                )
-                print(
-                    f"Reshaped to 2D - hate: {hate_vectors_2d.shape}, safe: {safe_vectors_2d.shape}"
-                )
-            else:
-                hate_vectors_2d = layer_hate_vectors
-                safe_vectors_2d = layer_safe_vectors
-
-            # Stack all vectors for PCA
-            all_vectors = np.vstack([hate_vectors_2d, safe_vectors_2d])
-
-            # Check for numerical issues and add jitter if needed
-            if np.allclose(hate_vectors_2d, safe_vectors_2d, atol=1e-8):
-                print(
-                    "Warning: Hate and safe vectors are nearly identical, adding random jitter"
-                )
-                # Add small random noise to avoid numerical instability
-                noise_scale = 1e-6  # Very small scale
-                all_vectors += np.random.normal(0, noise_scale, all_vectors.shape)
-
-            # Add a tiny bit of regularization to avoid numerical issues
-            epsilon = 1e-8
-            all_vectors_reg = all_vectors + np.random.normal(
-                0, epsilon, all_vectors.shape
-            )
-
-            # Normalize vectors to avoid numerical issues in PCA
-            all_vectors_mean = np.mean(all_vectors_reg, axis=0, keepdims=True)
-            all_vectors_std = (
-                np.std(all_vectors_reg, axis=0, keepdims=True) + 1e-10
-            )  # Add small value to avoid divide by zero
-            all_vectors_norm = (all_vectors_reg - all_vectors_mean) / all_vectors_std
-
-            # Stack mean vectors and steering vectors for consistent projection
-            mean_vectors_list = [
-                hate_mean_vector.reshape(1, -1),
-                safe_mean_vector.reshape(1, -1),
-            ]
-
-            # Add all steering vectors
-            steering_vectors_list = []
-            if all_steering_vectors is not None:
-                for name, data in all_steering_vectors.items():
-                    steering_vectors_list.append(data["vector"].reshape(1, -1))
-            else:
-                # Add the default steering vector if no multiple vectors provided
-                steering_vectors_list.append(steering_vector.reshape(1, -1))
-
-            # Stack all vectors for PCA projection
-            all_mean_steering_vectors = np.vstack(
-                mean_vectors_list + steering_vectors_list
-            )
-
-            # Add the same regularization to mean vectors for consistency
-            all_mean_steering_vectors_reg = (
-                all_mean_steering_vectors - all_vectors_mean
-            ) / all_vectors_std
-
-            try:
-                # Fit PCA to all data points to get a good projection space
-                pca = PCA(n_components=2, svd_solver="full")
-                all_2d = pca.fit_transform(all_vectors_norm)
-
-                # Transform mean vectors using the same PCA
-                mean_2d = pca.transform(all_mean_steering_vectors_reg)
-            except (ValueError, RuntimeWarning) as e:
-                print(
-                    f"Warning: PCA failed with error: {e}. Using simple dimension selection."
-                )
-                # Fallback: handle arrays with small dimensions correctly
-                if all_vectors_norm.shape[1] <= 2:
-                    # If input has only 1 or 2 dimensions, use them directly
-                    if all_vectors_norm.shape[1] == 1:
-                        # For 1D data, create a synthetic second dimension with small random values
-                        all_2d = np.column_stack(
-                            [
-                                all_vectors_norm[:, 0],
-                                np.random.normal(
-                                    0, 0.01, size=all_vectors_norm.shape[0]
-                                ),
-                            ]
-                        )
-                        mean_2d = np.column_stack(
-                            [
-                                all_mean_steering_vectors_reg[:, 0],
-                                np.random.normal(
-                                    0, 0.01, size=all_mean_steering_vectors_reg.shape[0]
-                                ),
-                            ]
-                        )
-                    else:
-                        # For 2D data, use both dimensions
-                        all_2d = all_vectors_norm
-                        mean_2d = all_mean_steering_vectors_reg
-                else:
-                    # For higher dimensional data, select two dimensions with highest variance
-                    var = np.var(all_vectors_norm, axis=0)
-                    idx = np.argsort(var)[-2:]
-                    all_2d = all_vectors_norm[:, idx]
-                    mean_2d = all_mean_steering_vectors_reg[:, idx]
-
-            # Split back into hate and safe
-            n_hate = len(hate_vectors_2d)
-            hate_2d = all_2d[:n_hate]
-            safe_2d = all_2d[n_hate:]
-
-            # Get transformed mean vectors
-            hate_mean_2d = mean_2d[0]
-            safe_mean_2d = mean_2d[1]
-
-            # Get transformed steering vectors
-            steering_2d_list = mean_2d[2:]  # All steering vectors start from index 2
-
-            # If we have type information, use it to color the points differently
-            if hate_types is not None and safe_types is not None:
-                # Calculate indices for each category first
-                hate_yes_indices = [
-                    j for j, t in enumerate(hate_types) if t == "hate_yes"
-                ]
-                hate_no_indices = [
-                    j for j, t in enumerate(hate_types) if t == "hate_no"
-                ]
-                safe_yes_indices = [
-                    j for j, t in enumerate(safe_types) if t == "safe_yes"
-                ]
-                safe_no_indices = [
-                    j for j, t in enumerate(safe_types) if t == "safe_no"
-                ]
-
-                # Count how many specialized means we have
-                n_specialized_means = 0
-                if "hate_yes_indices" in locals() and len(hate_yes_indices) > 0:
-                    n_specialized_means += 1
-                if "hate_no_indices" in locals() and len(hate_no_indices) > 0:
-                    n_specialized_means += 1
-                if "safe_yes_indices" in locals() and len(safe_yes_indices) > 0:
-                    n_specialized_means += 1
-                if "safe_no_indices" in locals() and len(safe_no_indices) > 0:
-                    n_specialized_means += 1
-
-                # For each type, plot the corresponding points
-                for category, style in category_styles.items():
-                    if category.startswith("hate_"):
-                        # Find indices of this category in the hate data
-                        if category == "hate_yes":
-                            indices = hate_yes_indices
-                        else:  # hate_no
-                            indices = hate_no_indices
-
-                        if indices:  # Only plot if we have points of this type
-                            ax.scatter(
-                                hate_2d[indices, 0],
-                                hate_2d[indices, 1],
-                                color=style["color"],
-                                alpha=0.5,
-                                marker=style["marker"],
-                                s=20,
-                                edgecolors="black",
-                                linewidths=0.5,
-                                label=style["label"],
-                                zorder=5,
-                            )
-                    else:  # safe category
-                        # Find indices of this category in the safe data
-                        if category == "safe_yes":
-                            indices = safe_yes_indices
-                        else:  # safe_no
-                            indices = safe_no_indices
-
-                        if indices:  # Only plot if we have points of this type
-                            ax.scatter(
-                                safe_2d[indices, 0],
-                                safe_2d[indices, 1],
-                                color=style["color"],
-                                alpha=0.5,
-                                marker=style["marker"],
-                                s=20,
-                                edgecolors="black",
-                                linewidths=0.5,
-                                label=style["label"],
-                                zorder=5,
-                            )
-            else:
-                # Fall back to original plotting if type information is not available
-                ax.scatter(
-                    hate_2d[:, 0],
-                    hate_2d[:, 1],
-                    color="#FF0000",  # Red for hate
-                    alpha=0.5,
-                    marker="o",
-                    s=20,
-                    edgecolors="black",
-                    linewidths=0.5,
-                    label="Hate Data",
-                    zorder=5,
-                )
-                ax.scatter(
-                    safe_2d[:, 0],
-                    safe_2d[:, 1],
-                    color="#0000FF",  # Blue for safe
-                    alpha=0.5,
-                    marker="^",
-                    s=20,
-                    edgecolors="black",
-                    linewidths=0.5,
-                    label="Safe Data",
-                    zorder=6,
-                )
-
-            # Plot mean vectors with bright colors and smaller arrows
-            ax.quiver(
-                0,
-                0,
-                hate_mean_2d[0],
-                hate_mean_2d[1],
-                color="#FF0000",  # Bright red
-                label="Hate Mean",
-                scale_units="xy",
-                scale=4,  # Higher scale makes arrows smaller
-                width=0.008,  # Thinner arrow
-                headwidth=5,  # Smaller head width
-                headlength=6,  # Smaller head length
-                alpha=1.0,
-                zorder=10,  # Make sure it's on top
-            )
-            ax.quiver(
-                0,
-                0,
-                safe_mean_2d[0],
-                safe_mean_2d[1],
-                color="#0000FF",  # Bright blue
-                label="Safe Mean",
-                scale_units="xy",
-                scale=4,  # Higher scale makes arrows smaller
-                width=0.008,  # Thinner arrow
-                headwidth=5,  # Smaller head width
-                headlength=6,  # Smaller head length
-                alpha=1.0,
-                zorder=10,  # Make sure it's on top
-            )
-
-            # Plot steering vectors
-            steering_idx = 0
-            if all_steering_vectors is not None:
-                for name, data in all_steering_vectors.items():
-                    if steering_idx < len(mean_2d):
-                        ax.quiver(
-                            0,
-                            0,
-                            mean_2d[steering_idx][0],
-                            mean_2d[steering_idx][1],
-                            color=data["color"],
-                            label=data["label"],
-                            scale_units="xy",
-                            scale=4,
-                            width=0.008,
-                            headwidth=5,
-                            headlength=6,
-                            alpha=1.0,
-                            zorder=11,
-                        )
-                        steering_idx += 1
-            elif steering_vectors_list:
-                # Plot default steering vector if specific ones aren't provided
-                if steering_idx < len(mean_2d):
-                    ax.quiver(
-                        0,
-                        0,
-                        mean_2d[steering_idx][0],
-                        mean_2d[steering_idx][1],
-                        color="#00FF00",  # Green for steering vector
-                        label="Steering Vector",
-                        scale_units="xy",
-                        scale=4,
-                        width=0.008,
-                        headwidth=5,
-                        headlength=6,
-                        alpha=1.0,
-                        zorder=11,
-                    )
-
-            # Set axis limits based on all data
-            x_min, x_max = np.min(all_2d[:, 0]), np.max(all_2d[:, 0])
-            y_min, y_max = np.min(all_2d[:, 1]), np.max(all_2d[:, 1])
-            x_margin = (x_max - x_min) * 0.1
-            y_margin = (y_max - y_min) * 0.1
-            ax.set_xlim(x_min - x_margin, x_max + x_margin)
-            ax.set_ylim(y_min - y_margin, y_max + y_margin)
-        else:
-            # If no data points provided, just plot the mean vectors using their own PCA
-            mean_vectors_list = [
-                hate_mean_vector.reshape(1, -1),
-                safe_mean_vector.reshape(1, -1),
-            ]
-
-            # Add all steering vectors
-            steering_vectors_list = []
-            if all_steering_vectors is not None:
-                for name, data in all_steering_vectors.items():
-                    steering_vectors_list.append(data["vector"].reshape(1, -1))
-            else:
-                # Add the default steering vector if no multiple vectors provided
-                steering_vectors_list.append(steering_vector.reshape(1, -1))
-
-            # Stack all vectors for PCA projection
-            all_mean_steering_vectors = np.vstack(
-                mean_vectors_list + steering_vectors_list
-            )
-
-            pca = PCA(n_components=2)
-            mean_2d = pca.fit_transform(all_mean_steering_vectors)
-
-            # Get transformed vectors
-            hate_mean_2d = mean_2d[0]
-            safe_mean_2d = mean_2d[1]
-            steering_2d_list = mean_2d[2:]  # All steering vectors start from index 2
-
-            # Plot mean vectors with smaller arrows
-            ax.quiver(
-                0,
-                0,
-                hate_mean_2d[0],
-                hate_mean_2d[1],
-                color="#FF0000",  # Bright red
-                label="Hate Mean",
-                scale=4,  # Higher scale makes arrows smaller
-                width=0.008,  # Thinner arrow
-                headwidth=4,  # Smaller head width
-                headlength=5,  # Smaller head length
-                alpha=1.0,
-            )
-            ax.quiver(
-                0,
-                0,
-                safe_mean_2d[0],
-                safe_mean_2d[1],
-                color="#0000FF",  # Bright blue
-                label="Safe Mean",
-                scale=4,  # Higher scale makes arrows smaller
-                width=0.008,  # Thinner arrow
-                headwidth=4,  # Smaller head width
-                headlength=5,  # Smaller head length
-                alpha=1.0,
-            )
-
-            # Plot steering vectors
-            steering_idx = 0
-            if all_steering_vectors is not None:
-                for name, data in all_steering_vectors.items():
-                    if steering_idx < len(mean_2d):
-                        ax.quiver(
-                            0,
-                            0,
-                            mean_2d[steering_idx][0],
-                            mean_2d[steering_idx][1],
-                            color=data["color"],
-                            label=data["label"],
-                            scale_units="xy",
-                            scale=4,
-                            width=0.008,
-                            headwidth=5,
-                            headlength=6,
-                            alpha=1.0,
-                            zorder=11,
-                        )
-                        steering_idx += 1
-            elif steering_vectors_list:
-                # Plot default steering vector if specific ones aren't provided
-                if steering_idx < len(mean_2d):
-                    ax.quiver(
-                        0,
-                        0,
-                        mean_2d[steering_idx][0],
-                        mean_2d[steering_idx][1],
-                        color="#00FF00",  # Green for steering vector
-                        label="Steering Vector",
-                        scale_units="xy",
-                        scale=4,
-                        width=0.008,
-                        headwidth=5,
-                        headlength=6,
-                        alpha=1.0,
-                        zorder=11,
-                    )
-
-            # Set axis limits
-            max_val = max(
-                np.max(np.abs(mean_2d[:, 0])),
-                np.max(np.abs(mean_2d[:, 1])),
-            )
-            ax.set_xlim(-max_val * 1.2, max_val * 1.2)
-            ax.set_ylim(-max_val * 1.2, max_val * 1.2)
-
-        # Add layer info to the title
-        ax.set_title(f"Layer {layer_idx} Steering Vectors")
-        ax.grid(True, linestyle="--", alpha=0.7)
-        ax.legend(loc="best")
-        ax.set_xlabel("PCA Component 1")
-        ax.set_ylabel("PCA Component 2")
-
-    plt.tight_layout()
-
-    if log_base is not None:
-        save_path = os.path.join(log_base, "all_steering_vectors.png")
-        plt.savefig(save_path, dpi=300, bbox_inches="tight")
-        print(f"Saved steering vectors plot to {save_path}")
-
-    plt.close()  # Close the plot to avoid memory issues
-    return plt
-
-
 def plot_performance_across_layers(results, metric="accuracy", save_path=None):
     """Plot performance metrics across layers.
 
     Args:
-        results: List of dictionaries containing layer results
+        results: List of dictionaries containing layer results, or dictionary with layer indices as keys
         metric: Metric to plot ('accuracy', 'auc', or 'silhouette')
-        save_path: Path to save the plot
+        save_path: Path to save the plot.
+        Example: "plots/performance_accuracy.png"
     """
-    layers = [r["layer_idx"] for r in results]
+    # Determine the structure of results and extract layer indices
+    if isinstance(results, list):
+        # Check if results is a list of dictionaries or something else
+        if results and isinstance(results[0], dict) and "layer_idx" in results[0]:
+            # Original case: List of dictionaries with layer_idx key
+            layers = [r["layer_idx"] for r in results]
 
-    # Get baseline metrics
-    baseline_metrics = [r["final_metrics"]["base_metrics"][metric] for r in results]
+            # Get baseline metrics with fallback if base_metrics doesn't exist
+            baseline_metrics = []
+            for r in results:
+                if "final_metrics" in r and r["final_metrics"]:
+                    if "base_metrics" in r["final_metrics"]:
+                        baseline_metrics.append(
+                            r["final_metrics"]["base_metrics"].get(metric, None)
+                        )
+                    else:
+                        # Fallback to direct metric if base_metrics doesn't exist
+                        baseline_metrics.append(r["final_metrics"].get(metric, None))
+                else:
+                    baseline_metrics.append(None)
 
-    # Get metrics for each steering coefficient
-    steering_coefs = [0.0, 0.5, 1.0, 2.0, 5.0]
-    coef_metrics = {coef: [] for coef in steering_coefs}
+            # Get metrics for each steering coefficient
+            steering_coefs = [0.0, 0.5, 1.0, 2.0, 5.0]
+            coef_metrics = {coef: [] for coef in steering_coefs}
 
-    for r in results:
-        for coef in steering_coefs:
-            coef_str = f"coef_{coef}"
-            if coef_str in r and metric in r[coef_str]:
-                coef_metrics[coef].append(r[coef_str][metric])
+            for r in results:
+                for coef in steering_coefs:
+                    coef_str = f"coef_{coef}"
+                    if coef_str in r and metric in r[coef_str]:
+                        coef_metrics[coef].append(r[coef_str][metric])
+                    else:
+                        coef_metrics[coef].append(None)
+        else:
+            # Case: results is a list but not of dictionaries with layer_idx
+            # Assume the indices are sequential layer numbers
+            layers = list(range(len(results)))
+
+            # If results is a list of values, use those directly
+            if all(not isinstance(r, dict) for r in results):
+                baseline_metrics = results
+                coef_metrics = {0.0: baseline_metrics}
+                steering_coefs = [0.0]
             else:
-                coef_metrics[coef].append(None)
+                # Try to extract metrics in a more general way
+                baseline_metrics = []
+                for r in results:
+                    if isinstance(r, dict) and "final_metrics" in r:
+                        if "base_metrics" in r["final_metrics"]:
+                            baseline_metrics.append(
+                                r["final_metrics"]["base_metrics"].get(metric, None)
+                            )
+                        else:
+                            # Fallback to direct metric if base_metrics doesn't exist
+                            baseline_metrics.append(
+                                r["final_metrics"].get(metric, None)
+                            )
+                    else:
+                        baseline_metrics.append(None)
+
+                # Get metrics for each steering coefficient
+                steering_coefs = [0.0, 0.5, 1.0, 2.0, 5.0]
+                coef_metrics = {coef: [] for coef in steering_coefs}
+
+                for r in results:
+                    for coef in steering_coefs:
+                        coef_str = f"coef_{coef}"
+                        if (
+                            isinstance(r, dict)
+                            and coef_str in r
+                            and metric in r[coef_str]
+                        ):
+                            coef_metrics[coef].append(r[coef_str][metric])
+                        else:
+                            coef_metrics[coef].append(None)
+    elif isinstance(results, dict):
+        # Case: results is a dictionary with layer indices as keys
+        layers = sorted(list(results.keys()))
+
+        # Try to extract baseline metrics
+        baseline_metrics = []
+        for layer in layers:
+            r = results[layer]
+            if isinstance(r, dict) and "final_metrics" in r:
+                if "base_metrics" in r["final_metrics"]:
+                    baseline_metrics.append(
+                        r["final_metrics"]["base_metrics"].get(metric, None)
+                    )
+                else:
+                    # Fallback to direct metric if base_metrics doesn't exist
+                    baseline_metrics.append(r["final_metrics"].get(metric, None))
+            else:
+                baseline_metrics.append(None)
+
+        # Get metrics for each steering coefficient
+        steering_coefs = [0.0, 0.5, 1.0, 2.0, 5.0]
+        coef_metrics = {coef: [] for coef in steering_coefs}
+
+        for layer in layers:
+            r = results[layer]
+            for coef in steering_coefs:
+                coef_str = f"coef_{coef}"
+                if isinstance(r, dict) and coef_str in r and metric in r[coef_str]:
+                    coef_metrics[coef].append(r[coef_str][metric])
+                else:
+                    coef_metrics[coef].append(None)
+    else:
+        # Not a structure we can handle
+        raise ValueError(
+            f"Unexpected results type: {type(results)}. Expected list or dict."
+        )
 
     plt.figure(figsize=(12, 6))
 
@@ -705,19 +163,101 @@ def plot_performance_across_layers(results, metric="accuracy", save_path=None):
 
 
 def plot_all_layer_vectors(results, save_dir):
-    """Plot all layer vectors in a grid."""
-    n_layers = len(results)
+    """Plot all layer vectors in a grid.
+
+    Args:
+        results: List of layer results
+        save_dir: Directory to save the plot.
+        The plot will be saved as "{save_dir}/all_layer_vectors.png"
+    """
+
+    import matplotlib.pyplot as plt
+    import numpy as np
+    from sklearn.decomposition import PCA
+
+    # Check if results is valid
+    if not results:
+        print("Error: No results provided")
+        return
+
+    # Filter valid results with all required keys
+    valid_results = []
+    for i, layer_data in enumerate(results):
+        if not isinstance(layer_data, dict):
+            print(
+                f"Warning: Layer data at index {i} is not a dictionary. Type: {type(layer_data)}"
+            )
+            continue
+
+        # Check for required keys
+        required_keys = ["hate_mean_vector", "safe_mean_vector", "steering_vector"]
+        if not all(key in layer_data for key in required_keys):
+            available_keys = (
+                list(layer_data.keys()) if isinstance(layer_data, dict) else "N/A"
+            )
+            print(
+                f"Warning: Layer data at index {i} missing required keys. Available keys: {available_keys}"
+            )
+            continue
+
+        valid_results.append(layer_data)
+
+    # Check if we have any valid results
+    if not valid_results:
+        print("Error: No valid layer data found. Cannot create plot.")
+        return
+
+    # Create grid layout
+    n_layers = len(valid_results)
     n_cols = min(3, n_layers)
     n_rows = (n_layers + n_cols - 1) // n_cols
 
-    fig, axes = plt.subplots(n_rows, n_cols, figsize=(15, 5 * n_rows))
-    axes = axes.flatten() if n_rows > 1 or n_cols > 1 else [axes]
+    # Handle single subplot case
+    if n_layers == 1 and n_rows == 1 and n_cols == 1:
+        fig, ax = plt.subplots(figsize=(7, 6))
+        axes = [ax]  # Create a list with a single axis for consistency
+    else:
+        fig, axes = plt.subplots(n_rows, n_cols, figsize=(15, 5 * n_rows))
+        # Convert to 1D array for easier indexing
+        if isinstance(axes, np.ndarray):
+            axes = axes.flatten()
+        else:
+            axes = [axes]  # Handle case of single axis
 
-    for i, layer_data in enumerate(results):
+    for i, layer_data in enumerate(valid_results):
+        if i >= len(axes):
+            print(f"Warning: Not enough axes for all layers. Skipping layer {i}")
+            continue
+
         # Extract vectors and ensure correct shapes
         hate_mean = layer_data["hate_mean_vector"]
         safe_mean = layer_data["safe_mean_vector"]
         steering = layer_data["steering_vector"]
+
+        # Validate vector shapes
+        if not isinstance(hate_mean, np.ndarray):
+            print(
+                f"Error: hate_mean_vector for layer {i} is not a numpy array. Type: {type(hate_mean)}"
+            )
+            axes[i].text(0.5, 0.5, "Invalid hate_mean_vector", ha="center", va="center")
+            axes[i].set_title(f"Layer {i}")
+            continue
+
+        if not isinstance(safe_mean, np.ndarray):
+            print(
+                f"Error: safe_mean_vector for layer {i} is not a numpy array. Type: {type(safe_mean)}"
+            )
+            axes[i].text(0.5, 0.5, "Invalid safe_mean_vector", ha="center", va="center")
+            axes[i].set_title(f"Layer {i}")
+            continue
+
+        if not isinstance(steering, np.ndarray):
+            print(
+                f"Error: steering_vector for layer {i} is not a numpy array. Type: {type(steering)}"
+            )
+            axes[i].text(0.5, 0.5, "Invalid steering_vector", ha="center", va="center")
+            axes[i].set_title(f"Layer {i}")
+            continue
 
         # Print shapes for debugging
         print(
@@ -725,37 +265,42 @@ def plot_all_layer_vectors(results, save_dir):
         )
 
         # Ensure vectors are properly shaped for PCA
-        hate_mean_vec = hate_mean.reshape(1, -1)
-        safe_mean_vec = safe_mean.reshape(1, -1)
-        steering_vec = steering.reshape(1, -1)
+        if hate_mean.ndim > 1:
+            hate_mean = hate_mean.reshape(-1)
+        if safe_mean.ndim > 1:
+            safe_mean = safe_mean.reshape(-1)
+        if steering.ndim > 1:
+            steering = steering.reshape(-1)
 
-        # Add small jitter to avoid numerical issues
-        epsilon = 1e-8
-        hate_mean_vec += np.random.normal(0, epsilon, hate_mean_vec.shape)
-        safe_mean_vec += np.random.normal(0, epsilon, safe_mean_vec.shape)
-        steering_vec += np.random.normal(0, epsilon, steering_vec.shape)
+        # Ensure all vectors have the same shape
+        min_dim = min(hate_mean.shape[0], safe_mean.shape[0], steering.shape[0])
+        hate_mean = hate_mean[:min_dim]
+        safe_mean = safe_mean[:min_dim]
+        steering = steering[:min_dim]
 
-        # Project to 2D using PCA with safeguards
-        vectors = np.vstack([hate_mean_vec, safe_mean_vec, steering_vec])
+        # Stack for PCA
+        vectors = np.vstack([hate_mean, safe_mean, steering])
 
-        try:
-            # Standardize before PCA
-            vectors_mean = np.mean(vectors, axis=0, keepdims=True)
-            vectors_std = (
-                np.std(vectors, axis=0, keepdims=True) + 1e-10
-            )  # Avoid divide by zero
-            vectors_norm = (vectors - vectors_mean) / vectors_std
+        # Standardize before PCA
+        vectors_mean = np.mean(vectors, axis=0, keepdims=True)
+        vectors_std = (
+            np.std(vectors, axis=0, keepdims=True) + 1e-10
+        )  # Avoid divide by zero
+        vectors_norm = (vectors - vectors_mean) / vectors_std
 
-            pca = PCA(n_components=2, svd_solver="full")
-            vectors_2d = pca.fit_transform(vectors_norm)
-        except (ValueError, RuntimeWarning) as e:
+        # Check if PCA can be performed
+        if vectors_norm.shape[0] < 2 or vectors_norm.shape[1] < 2:
             print(
-                f"Warning in layer {i}: PCA failed with error: {e}. Using simple dimension selection."
+                f"Error: Insufficient data for PCA for layer {i}: shape {vectors_norm.shape}"
             )
-            # Fallback: just select 2 dimensions with highest variance
-            var = np.var(vectors, axis=0)
-            idx = np.argsort(var)[-2:]
-            vectors_2d = vectors[:, idx]
+            axes[i].text(
+                0.5, 0.5, "Insufficient data for PCA", ha="center", va="center"
+            )
+            axes[i].set_title(f"Layer {i}")
+            continue
+
+        pca = PCA(n_components=2, svd_solver="full")
+        vectors_2d = pca.fit_transform(vectors_norm)
 
         ax = axes[i]
         ax.quiver(
@@ -765,10 +310,12 @@ def plot_all_layer_vectors(results, save_dir):
             vectors_2d[0, 1],
             color="#FF0000",
             label="Hate Mean",
+            scale_units="xy",
             scale=1,
             width=0.015,
             headwidth=5,
             headlength=7,
+            zorder=50,
         )
         ax.quiver(
             0,
@@ -777,10 +324,12 @@ def plot_all_layer_vectors(results, save_dir):
             vectors_2d[1, 1],
             color="#0000FF",
             label="Safe Mean",
+            scale_units="xy",
             scale=1,
             width=0.015,
             headwidth=5,
             headlength=7,
+            zorder=50,
         )
         ax.quiver(
             0,
@@ -789,15 +338,18 @@ def plot_all_layer_vectors(results, save_dir):
             vectors_2d[2, 1],
             color="#00FF00",
             label="Steering Vector",
+            scale_units="xy",
             scale=1,
             width=0.015,
             headwidth=5,
             headlength=7,
+            zorder=50,
         )
 
+        # Set limits to see vectors clearly
+        ax.set_xlim(-1.5, 1.5)
+        ax.set_ylim(-1.5, 1.5)
         ax.set_title(f"Layer {i}")
-        ax.set_xlabel("PCA Dimension 1")
-        ax.set_ylabel("PCA Dimension 2")
         ax.grid(True)
         if i == 0:
             ax.legend()
@@ -812,44 +364,80 @@ def plot_all_layer_vectors(results, save_dir):
     )
     plt.close()
 
-    return fig
-
 
 def visualize_decision_boundary(
     ccs, hate_vectors, safe_vectors, steering_vector, log_base=None
 ):
-    """Visualize the decision boundary of the CCS probe in the steering vector direction."""
+    """Visualize the decision boundary of the CCS probe in the steering vector direction.
+
+    Args:
+        ccs: CCS probe
+        hate_vectors: Vectors for hate content
+        safe_vectors: Vectors for safe content
+        steering_vector: The calculated steering vector
+        log_base: Base path for saving the plot.
+        Example: "plots/decision_boundary_layer_0" (will save as "plots/decision_boundary_layer_0_decision_boundary.png")
+    """
     # Create figure and axes
     fig, ax = plt.subplots(figsize=(12, 10))
+
+    # Ensure arrays are float32
+    hate_vectors = hate_vectors.astype(np.float32)
+    safe_vectors = safe_vectors.astype(np.float32)
+    steering_vector = steering_vector.astype(np.float32)
 
     # Normalize steering vector
     steering_norm = np.linalg.norm(steering_vector)
     if steering_norm > 1e-10:
         steering_vector = steering_vector / steering_norm
 
-    # Combine data
-    X_combined = np.vstack([hate_vectors, safe_vectors])
-    labels = np.concatenate([np.zeros(len(hate_vectors)), np.ones(len(safe_vectors))])
+    # Ensure steering vector is flattened
+    steering_vector_flat = steering_vector.flatten()
+
+    # Combine data and make sure everything is 2D
+    if len(hate_vectors.shape) == 3:
+        hate_vectors_2d = hate_vectors.reshape(hate_vectors.shape[0], -1)
+    else:
+        hate_vectors_2d = hate_vectors
+
+    if len(safe_vectors.shape) == 3:
+        safe_vectors_2d = safe_vectors.reshape(safe_vectors.shape[0], -1)
+    else:
+        safe_vectors_2d = safe_vectors
+
+    # Stack the vectors
+    X_combined = np.vstack([hate_vectors_2d, safe_vectors_2d])
+    labels = np.concatenate(
+        [np.zeros(len(hate_vectors_2d)), np.ones(len(safe_vectors_2d))]
+    )
 
     # Project data to 2D for visualization
     # First component: steering vector direction
     # Second component: PCA of residuals
     projections = []
 
-    # Project onto steering vector
-    projection1 = np.array([np.dot(x, steering_vector) for x in X_combined])
+    # Project onto steering vector - ensure proper shapes for dot product
+    projection1 = np.array(
+        [np.dot(x.flatten(), steering_vector_flat) for x in X_combined]
+    )
     projections.append(projection1)
 
-    # Compute residuals
-    residuals = X_combined - np.outer(projection1, steering_vector)
+    # Compute residuals - ensure they're 2D for PCA
+    residuals = X_combined - np.outer(projection1, steering_vector_flat)
+
+    # Add small regularization to avoid numerical issues
+    epsilon = 1e-8
+    residuals += np.random.normal(0, epsilon, residuals.shape)
 
     # Find second direction (orthogonal to steering vector)
-    pca = PCA(n_components=1)
+    pca = PCA(n_components=1, svd_solver="arpack")
     pca.fit(residuals)
     second_direction = pca.components_[0]
 
-    # Project onto second direction
-    projection2 = np.array([np.dot(x, second_direction) for x in X_combined])
+    # Project onto second direction - ensure proper shapes again
+    projection2 = np.array(
+        [np.dot(x.flatten(), second_direction.flatten()) for x in X_combined]
+    )
     projections.append(projection2)
 
     # Create 2D projections
@@ -863,17 +451,38 @@ def visualize_decision_boundary(
 
     # Reconstruct grid points in original space
     grid_points = np.array([xx.ravel(), yy.ravel()]).T
-    original_space = np.outer(grid_points[:, 0], steering_vector) + np.outer(
-        grid_points[:, 1], second_direction
+    original_space = np.outer(grid_points[:, 0], steering_vector_flat) + np.outer(
+        grid_points[:, 1], second_direction.flatten()
     )
 
-    # Predict on grid points
-    X_placeholder = np.zeros_like(original_space)
-    grid_preds, _ = ccs.predict(original_space, X_placeholder)
-    grid_preds = grid_preds.reshape(xx.shape)
+    # Ensure original_space is float32
+    original_space = original_space.astype(np.float32)
 
-    # Plot decision boundary
-    ax.contourf(xx, yy, grid_preds, alpha=0.3, cmap="RdBu")
+    # Predict on grid points using predict_from_vectors instead of predict
+    # This avoids the issue with tokenization since we're passing vectors directly
+    grid_preds, grid_confidences = ccs.predict_from_vectors(original_space)
+    grid_preds = grid_preds.reshape(xx.shape)
+    grid_confidences = grid_confidences.reshape(xx.shape)
+
+    # Plot decision boundary with higher contrast and clearer boundaries
+    # Use alpha=0.6 instead of 0.3 for better visibility
+    contour_fill = ax.contourf(
+        xx, yy, grid_preds, alpha=0.6, cmap="RdBu_r", levels=np.linspace(0, 1, 11)
+    )
+
+    # Add explicit decision boundary line (where probability = 0.5)
+    decision_boundary = ax.contour(
+        xx,
+        yy,
+        grid_confidences,
+        levels=[0.5],
+        colors="black",
+        linestyles="dashed",
+        linewidths=2,
+    )
+
+    # Add colorbar to show prediction confidence
+    plt.colorbar(contour_fill, ax=ax, label="Prediction (0=Hate, 1=Safe)")
 
     # Plot data points
     colors = np.array(["#D7263D", "#1B98E0"])  # Red for hate, blue for safe
@@ -946,130 +555,268 @@ def visualize_decision_boundary(
 
 
 def plot_all_decision_boundaries(layers_data, log_base=None):
-    """Plot decision boundaries for all layers as subplots in a single figure."""
-    n_layers = len(layers_data)
-    n_cols = 3
+    """Plot decision boundaries for all layers as subplots in a single figure.
+
+    Args:
+        layers_data: List of layer data
+        log_base: Base path for saving the plot.
+        Example: "plots/all_decision_boundaries" (will save as "plots/all_decision_boundaries.png")
+    """
+
+    import matplotlib.pyplot as plt
+    import numpy as np
+    from sklearn.decomposition import PCA
+
+    # Check if layers_data is valid
+    if not layers_data or not isinstance(layers_data, (list, dict)):
+        print(f"Error: Invalid layers_data structure. Type: {type(layers_data)}")
+        return None
+
+    # Convert to list if it's a dict
+    valid_layers = []
+    if isinstance(layers_data, dict):
+        for key in sorted(layers_data.keys()):
+            valid_layers.append(layers_data[key])
+    else:
+        # Filter out invalid entries
+        for i, layer in enumerate(layers_data):
+            if not isinstance(layer, dict):
+                print(
+                    f"Warning: Layer data at index {i} is not a dictionary. Type: {type(layer)}"
+                )
+                continue
+
+            # Check for required keys
+            required_keys = ["ccs", "hate_vectors", "safe_vectors", "steering_vector"]
+            if not all(key in layer for key in required_keys):
+                available_keys = (
+                    list(layer.keys()) if isinstance(layer, dict) else "N/A"
+                )
+                print(
+                    f"Warning: Layer {i} missing required keys. Available keys: {available_keys}"
+                )
+                continue
+
+            valid_layers.append(layer)
+
+    if not valid_layers:
+        print("Error: No valid layer data found. Cannot create plot.")
+        return None
+
+    n_layers = len(valid_layers)
+    n_cols = min(3, n_layers)
     n_rows = (n_layers + n_cols - 1) // n_cols
-    fig, axes = plt.subplots(n_rows, n_cols, figsize=(7 * n_cols, 6 * n_rows))
-    axes = axes.flatten()
 
-    for i, layer in enumerate(layers_data):
-        ccs = layer["ccs"]
-        hate_vectors = layer["hate_vectors"]
-        safe_vectors = layer["safe_vectors"]
-        steering_vector = layer["steering_vector"]
-        layer_idx = layer.get("layer_idx", i)
-        ax = axes[i]
+    # Create figure and axis grid
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(6 * n_cols, 5 * n_rows))
 
-        # Normalize steering vector
-        steering_norm = np.linalg.norm(steering_vector)
-        if steering_norm > 1e-10:
-            steering_vector = steering_vector / steering_norm
+    # Handle case with only one subplot
+    if n_rows == 1 and n_cols == 1:
+        axes = np.array([[axes]])
+    elif n_rows == 1:
+        axes = np.array([axes])
+    elif n_cols == 1:
+        axes = np.array([[ax] for ax in axes])
 
-        # Combine data
-        X_combined = np.vstack([hate_vectors, safe_vectors])
-        labels = np.concatenate(
-            [np.zeros(len(hate_vectors)), np.ones(len(safe_vectors))]
-        )
+    # Plot each layer's decision boundary
+    for i, layer_data in enumerate(valid_layers):
+        row_idx = i // n_cols
+        col_idx = i % n_cols
+        ax = axes[row_idx, col_idx]
 
-        # Project data to 2D for visualization
-        projection1 = np.array([np.dot(x, steering_vector) for x in X_combined])
-        residuals = X_combined - np.outer(projection1, steering_vector)
-        pca = PCA(n_components=1)
-        pca.fit(residuals)
-        second_direction = pca.components_[0]
-        projection2 = np.array([np.dot(x, second_direction) for x in X_combined])
-        X_2d = np.column_stack([projection1, projection2])
+        # Extract required data
+        ccs = layer_data["ccs"]
+        hate_vectors = layer_data["hate_vectors"]
+        safe_vectors = layer_data["safe_vectors"]
+        steering_vector = layer_data["steering_vector"]
 
-        # Create grid for decision boundary
-        x_min, x_max = X_2d[:, 0].min() - 1, X_2d[:, 0].max() + 1
-        y_min, y_max = X_2d[:, 1].min() - 1, X_2d[:, 1].max() + 1
+        # Validate data types
+        if not hasattr(ccs, "predict_from_vectors"):
+            print(
+                f"Error: Layer {i} - CCS object does not have predict_from_vectors method"
+            )
+            ax.text(0.5, 0.5, "Invalid CCS object", ha="center", va="center")
+            ax.set_title(f"Layer {i}")
+            continue
+
+        if not isinstance(hate_vectors, np.ndarray):
+            print(
+                f"Error: Layer {i} - hate_vectors is not a numpy array. Type: {type(hate_vectors)}"
+            )
+            ax.text(0.5, 0.5, "Invalid hate_vectors", ha="center", va="center")
+            ax.set_title(f"Layer {i}")
+            continue
+
+        if not isinstance(safe_vectors, np.ndarray):
+            print(
+                f"Error: Layer {i} - safe_vectors is not a numpy array. Type: {type(safe_vectors)}"
+            )
+            ax.text(0.5, 0.5, "Invalid safe_vectors", ha="center", va="center")
+            ax.set_title(f"Layer {i}")
+            continue
+
+        if not isinstance(steering_vector, np.ndarray):
+            print(
+                f"Error: Layer {i} - steering_vector is not a numpy array. Type: {type(steering_vector)}"
+            )
+            ax.text(0.5, 0.5, "Invalid steering_vector", ha="center", va="center")
+            ax.set_title(f"Layer {i}")
+            continue
+
+        # Get original shapes for reshaping
+        if hate_vectors.ndim > 2:
+            hate_shape = hate_vectors.shape[1:]
+            hate_vectors = hate_vectors.reshape(hate_vectors.shape[0], -1)
+        else:
+            hate_shape = None
+
+        if safe_vectors.ndim > 2:
+            safe_shape = safe_vectors.shape[1:]
+            safe_vectors = safe_vectors.reshape(safe_vectors.shape[0], -1)
+        else:
+            safe_shape = None
+
+        # Ensure steering vector is properly shaped
+        if steering_vector.ndim > 1:
+            steering_vector = steering_vector.reshape(-1)
+
+        # Sample a subset for visualization to avoid crowding
+        max_samples = 100
+        if hate_vectors.shape[0] > max_samples:
+            indices = np.random.choice(
+                hate_vectors.shape[0], max_samples, replace=False
+            )
+            hate_subset = hate_vectors[indices]
+        else:
+            hate_subset = hate_vectors
+
+        if safe_vectors.shape[0] > max_samples:
+            indices = np.random.choice(
+                safe_vectors.shape[0], max_samples, replace=False
+            )
+            safe_subset = safe_vectors[indices]
+        else:
+            safe_subset = safe_vectors
+
+        # Combine all vectors for PCA
+        all_vectors = np.vstack([hate_subset, safe_subset])
+
+        # Check for valid PCA input
+        if all_vectors.shape[0] < 2 or all_vectors.shape[1] < 2:
+            print(
+                f"Error: Layer {i} - Insufficient data for PCA. Shape: {all_vectors.shape}"
+            )
+            ax.text(0.5, 0.5, "Insufficient data for PCA", ha="center", va="center")
+            ax.set_title(f"Layer {i}")
+            continue
+
+        # Apply PCA to reduce to 2D for visualization
+        pca = PCA(n_components=2)
+        all_vectors_2d = pca.fit_transform(all_vectors)
+
+        # Split back into hate and safe
+        hate_vectors_2d = all_vectors_2d[: hate_subset.shape[0]]
+        safe_vectors_2d = all_vectors_2d[hate_subset.shape[0] :]
+
+        # Project steering vector to 2D
+        steering_vector_2d = pca.transform(steering_vector.reshape(1, -1))[0]
+
+        # Create a grid of points for decision boundary
+        x_min, x_max = all_vectors_2d[:, 0].min() - 1, all_vectors_2d[:, 0].max() + 1
+        y_min, y_max = all_vectors_2d[:, 1].min() - 1, all_vectors_2d[:, 1].max() + 1
         xx, yy = np.meshgrid(
             np.linspace(x_min, x_max, 100), np.linspace(y_min, y_max, 100)
         )
-        grid_points = np.array([xx.ravel(), yy.ravel()]).T
-        original_space = np.outer(grid_points[:, 0], steering_vector) + np.outer(
-            grid_points[:, 1], second_direction
+        grid_points = np.c_[xx.ravel(), yy.ravel()]
+
+        # Convert grid points back to original space
+        grid_original = pca.inverse_transform(grid_points)
+
+        # Get predictions for the grid
+        if hate_shape is not None and grid_original.shape[1] != np.prod(hate_shape):
+            print(f"Error: Layer {i} - Dimension mismatch in grid transform")
+            ax.text(0.5, 0.5, "Dimension mismatch", ha="center", va="center")
+            ax.set_title(f"Layer {i}")
+            continue
+
+        # Make predictions with CCS model
+        grid_tensor = torch.tensor(
+            grid_original, dtype=torch.float32, device=ccs.device
         )
-        X_placeholder = np.zeros_like(original_space)
-        grid_preds, _ = ccs.predict(original_space, X_placeholder)
-        grid_preds = grid_preds.reshape(xx.shape)
+
+        with torch.no_grad():
+            try:
+                grid_preds = ccs.probe(grid_tensor).cpu().numpy()
+                # Reshape to match grid
+                Z = grid_preds.reshape(xx.shape)
+            except Exception as e:
+                print(f"Error in CCS prediction for layer {i}: {e}")
+                ax.text(0.5, 0.5, "Prediction error", ha="center", va="center")
+                ax.set_title(f"Layer {i}")
+                continue
 
         # Plot decision boundary
-        ax.contourf(xx, yy, grid_preds, alpha=0.3, cmap="RdBu")
-        colors = np.array(["#D7263D", "#1B98E0"])  # Red for hate, blue for safe
-        edge_color = "k"  # Black edge for contrast
+        contour = ax.contourf(xx, yy, Z, cmap="RdBu", alpha=0.3)
 
-        for label, color in zip([0, 1], colors):
-            idx = labels == label
-            ax.scatter(
-                X_2d[idx, 0],
-                X_2d[idx, 1],
-                c=color,
-                edgecolor=edge_color,
-                s=70,
-                alpha=0.85,
-                label="Hate" if label == 0 else "Safe",
-            )
+        # Plot data points
+        ax.scatter(
+            hate_vectors_2d[:, 0],
+            hate_vectors_2d[:, 1],
+            c="red",
+            label="Hate",
+            alpha=0.6,
+            edgecolors="k",
+        )
+        ax.scatter(
+            safe_vectors_2d[:, 0],
+            safe_vectors_2d[:, 1],
+            c="blue",
+            label="Safe",
+            alpha=0.6,
+            edgecolors="k",
+        )
+
+        # Plot steering vector
         ax.arrow(
             0,
             0,
-            1,
-            0,
-            color="black",
-            width=0.01,
-            head_width=0.1,
-            head_length=0.1,
-            length_includes_head=True,
-            label="Steering Direction",
+            steering_vector_2d[0],
+            steering_vector_2d[1],
+            head_width=0.15,
+            head_length=0.2,
+            fc="green",
+            ec="green",
+            label="Steering Vector",
         )
-        ax.set_xlabel("Steering Vector Direction")
-        ax.set_ylabel("Orthogonal Direction")
-        ax.set_title(f"Layer {layer_idx}")
-        ax.grid(True)
-        if i == 0:
-            ax.legend(loc="upper right", fontsize=12)
+
+        # Add labels, title, legend
+        ax.set_title(f"Layer {i}")
+        if i == 0:  # Only add legend to first subplot
+            ax.legend()
+
+        if i % n_cols == 0:  # First column
+            ax.set_ylabel("PC2")
+        if i >= (n_rows - 1) * n_cols:  # Last row
+            ax.set_xlabel("PC1")
 
     # Hide unused subplots
-    for j in range(n_layers, len(axes)):
-        axes[j].axis("off")
+    for i in range(len(valid_layers), n_rows * n_cols):
+        row = i // n_cols
+        col = i % n_cols
+        axes[row, col].axis("off")
 
-    # Add detailed description block
-    description = (
-        "This figure shows the decision boundaries of the CCS probe for each layer in the space defined by the steering vector (horizontal axis) and its orthogonal complement (vertical axis).\n\n"
-        "**How to interpret:**\n"
-        "- Each subplot corresponds to a different layer.\n"
-        "- The colored regions show the model's predicted class (hate or safe) in the 2D projection.\n"
-        "- The black arrow shows the direction of the steering vector.\n"
-        "- Points are colored by their true class.\n"
-        "- A clear, vertical decision boundary (perpendicular to the steering vector) indicates the probe can reliably distinguish between content types along the steering direction.\n\n"
-        "**Ideal case:**\n"
-        "- Hate and safe points form two distinct clusters separated by a sharp boundary.\n"
-        "- The boundary is perpendicular to the steering direction.\n"
-        "- The probe's predictions match the true classes.\n\n"
-        "**Non-ideal case:**\n"
-        "- Overlapping clusters or a fuzzy boundary indicate the probe struggles to distinguish between classes.\n"
-        "- A boundary not aligned with the steering direction suggests the steering vector is not the most discriminative direction.\n"
-        "\n"
-        "**Axes:**\n"
-        "- Horizontal: projection onto the steering vector (how much a point moves when steered).\n"
-        "- Vertical: projection onto the main orthogonal direction (other variations).\n"
-    )
-    fig.text(
-        0.5,
-        0.01,
-        description,
-        ha="center",
-        va="bottom",
-        wrap=True,
-        fontsize=12,
-        bbox=dict(facecolor="white", alpha=0.8, edgecolor="gray"),
-    )
-    plt.tight_layout(rect=(0, 0.08, 1, 1))
+    plt.tight_layout()
+
+    # Save figure if log_base is provided
     if log_base:
-        plt.savefig(
-            f"{log_base}_all_decision_boundaries.png", dpi=300, bbox_inches="tight"
-        )
+        if not os.path.exists(os.path.dirname(log_base)):
+            os.makedirs(os.path.dirname(log_base), exist_ok=True)
+        plt.savefig(f"{log_base}.png", dpi=300, bbox_inches="tight")
+        print(f"Saved decision boundaries plot to {log_base}.png")
+        plt.close()
+    else:
+        plt.show()
+
     return fig
 
 
@@ -1087,8 +834,12 @@ def plot_vectors_all_strategies(
         layer_idx: Layer index for title
         all_strategy_data: Dictionary with data for all strategies
         current_strategy: The current strategy used in the model ("mean", "last-token", or "first-token")
-        save_path: Path to save the plot
+        save_path: Path to save the plot.
+            Example: "plots/layer_0_all_strategies_vectors.png"
         all_steering_vectors: Dict of different steering vectors with their properties
+
+    Returns:
+        Example: "plots/layer_0_all_strategies_vectors.png"
     """
     # Create figure with 1 row and 3 columns for the three strategies
     fig, axes = plt.subplots(1, 3, figsize=(24, 8))
@@ -1125,12 +876,23 @@ def plot_vectors_all_strategies(
         },
     }
 
+    # Print information about all_steering_vectors
+    if all_steering_vectors is not None:
+        print(f"All steering vectors keys: {list(all_steering_vectors.keys())}")
+    else:
+        print("No all_steering_vectors provided")
+
     # Plot each strategy in its own subplot
     for i, (strategy, title) in enumerate(zip(strategies, strategy_titles)):
         ax = axes[i]
 
         # Get data for this strategy
+        if strategy not in all_strategy_data:
+            print(f"Strategy {strategy} not found in all_strategy_data")
+            continue
+
         data = all_strategy_data[strategy]
+        print(f"Data keys for strategy {strategy}: {list(data.keys())}")
 
         # Access individual category data
         hate_yes_vectors = data.get("hate_yes", None)
@@ -1138,12 +900,28 @@ def plot_vectors_all_strategies(
         safe_yes_vectors = data.get("safe_yes", None)
         safe_no_vectors = data.get("safe_no", None)
 
+        # Print information about vector shapes
+        for name, vectors in [
+            ("hate_yes", hate_yes_vectors),
+            ("hate_no", hate_no_vectors),
+            ("safe_yes", safe_yes_vectors),
+            ("safe_no", safe_no_vectors),
+        ]:
+            if vectors is not None:
+                print(f"{strategy} - {name} shape: {vectors.shape}")
+            else:
+                print(f"{strategy} - {name} is None")
+
         # Make sure we have all necessary vectors
         if (
             hate_yes_vectors is None
+            or hate_yes_vectors.size == 0
             or hate_no_vectors is None
+            or hate_no_vectors.size == 0
             or safe_yes_vectors is None
+            or safe_yes_vectors.size == 0
             or safe_no_vectors is None
+            or safe_no_vectors.size == 0
         ):
             print(
                 f"Warning: Missing some vector types for {strategy}. Using available data."
@@ -1152,7 +930,12 @@ def plot_vectors_all_strategies(
             hate_vectors = data.get("hate", None)
             safe_vectors = data.get("safe", None)
 
-            if hate_vectors is not None and safe_vectors is not None:
+            if (
+                hate_vectors is not None
+                and hate_vectors.size > 0
+                and safe_vectors is not None
+                and safe_vectors.size > 0
+            ):
                 # For standard datasets, we'll split each category (hate/safe) into two
                 # equal parts to simulate hate_yes/hate_no and safe_yes/safe_no
                 half_hate = len(hate_vectors) // 2
@@ -1164,32 +947,54 @@ def plot_vectors_all_strategies(
                 safe_yes_vectors = safe_vectors[:half_safe]
                 safe_no_vectors = safe_vectors[half_safe:]
 
-        # Reshape vectors if they're 3D
-        for vector_name in [
-            "hate_yes_vectors",
-            "hate_no_vectors",
-            "safe_yes_vectors",
-            "safe_no_vectors",
-        ]:
-            vector = locals()[vector_name]
-            if vector is not None and len(vector.shape) == 3:
-                locals()[vector_name] = vector.reshape(vector.shape[0], -1)
+                print("Using fallback with hate/safe data:")
+                print(
+                    f"  hate_yes: {hate_yes_vectors.shape if hate_yes_vectors is not None else None}"
+                )
+                print(
+                    f"  hate_no: {hate_no_vectors.shape if hate_no_vectors is not None else None}"
+                )
+                print(
+                    f"  safe_yes: {safe_yes_vectors.shape if safe_yes_vectors is not None else None}"
+                )
+                print(
+                    f"  safe_no: {safe_no_vectors.shape if safe_no_vectors is not None else None}"
+                )
 
-        # Apply reshaping back to the variables
-        hate_yes_vectors = locals()["hate_yes_vectors"]
-        hate_no_vectors = locals()["hate_no_vectors"]
-        safe_yes_vectors = locals()["safe_yes_vectors"]
-        safe_no_vectors = locals()["safe_no_vectors"]
+        # Properly flatten vectors if they're 3D - critical for PCA
+        if hate_yes_vectors is not None and len(hate_yes_vectors.shape) == 3:
+            hate_yes_vectors = hate_yes_vectors.reshape(hate_yes_vectors.shape[0], -1)
+        if hate_no_vectors is not None and len(hate_no_vectors.shape) == 3:
+            hate_no_vectors = hate_no_vectors.reshape(hate_no_vectors.shape[0], -1)
+        if safe_yes_vectors is not None and len(safe_yes_vectors.shape) == 3:
+            safe_yes_vectors = safe_yes_vectors.reshape(safe_yes_vectors.shape[0], -1)
+        if safe_no_vectors is not None and len(safe_no_vectors.shape) == 3:
+            safe_no_vectors = safe_no_vectors.reshape(safe_no_vectors.shape[0], -1)
 
-        # Stack all vectors for PCA
-        all_vectors = np.vstack(
-            [
-                hate_yes_vectors if hate_yes_vectors is not None else np.array([]),
-                hate_no_vectors if hate_no_vectors is not None else np.array([]),
-                safe_yes_vectors if safe_yes_vectors is not None else np.array([]),
-                safe_no_vectors if safe_no_vectors is not None else np.array([]),
-            ]
-        )
+        # Stack all vectors for PCA - handle empty arrays
+        all_vectors_list = []
+        if hate_yes_vectors is not None and hate_yes_vectors.size > 0:
+            # Ensure float32 for numerical stability
+            all_vectors_list.append(hate_yes_vectors.astype(np.float32))
+        if hate_no_vectors is not None and hate_no_vectors.size > 0:
+            all_vectors_list.append(hate_no_vectors.astype(np.float32))
+        if safe_yes_vectors is not None and safe_yes_vectors.size > 0:
+            all_vectors_list.append(safe_yes_vectors.astype(np.float32))
+        if safe_no_vectors is not None and safe_no_vectors.size > 0:
+            all_vectors_list.append(safe_no_vectors.astype(np.float32))
+
+        if not all_vectors_list:
+            ax.text(
+                0.5,
+                0.5,
+                "No data available for this strategy",
+                horizontalalignment="center",
+                verticalalignment="center",
+                transform=ax.transAxes,
+            )
+            continue
+
+        all_vectors = np.vstack(all_vectors_list)
 
         # Check for empty data
         if all_vectors.size == 0:
@@ -1214,104 +1019,148 @@ def plot_vectors_all_strategies(
 
         # Prepare mean vectors
         mean_vectors = []
+        mean_vectors_categories = []  # Keep track of which category each mean is from
 
-        # Calculate mean vectors for each category
-        hate_yes_mean = (
-            np.mean(hate_yes_vectors, axis=0).reshape(1, -1)
-            if hate_yes_vectors.size > 0
-            else None
-        )
-        hate_no_mean = (
-            np.mean(hate_no_vectors, axis=0).reshape(1, -1)
-            if hate_no_vectors.size > 0
-            else None
-        )
-        safe_yes_mean = (
-            np.mean(safe_yes_vectors, axis=0).reshape(1, -1)
-            if safe_yes_vectors.size > 0
-            else None
-        )
-        safe_no_mean = (
-            np.mean(safe_no_vectors, axis=0).reshape(1, -1)
-            if safe_no_vectors.size > 0
-            else None
-        )
+        # Calculate mean vectors for each category and add them to the list if they exist
+        if hate_yes_vectors is not None and hate_yes_vectors.size > 0:
+            hate_yes_mean = (
+                np.mean(hate_yes_vectors, axis=0).reshape(1, -1).astype(np.float32)
+            )
+            mean_vectors.append(hate_yes_mean)
+            mean_vectors_categories.append("hate_yes")
+        else:
+            hate_yes_mean = None
 
-        # Add available means to the list
-        for mean_vector in [hate_yes_mean, hate_no_mean, safe_yes_mean, safe_no_mean]:
-            if mean_vector is not None:
-                mean_vectors.append(mean_vector)
+        if hate_no_vectors is not None and hate_no_vectors.size > 0:
+            hate_no_mean = (
+                np.mean(hate_no_vectors, axis=0).reshape(1, -1).astype(np.float32)
+            )
+            mean_vectors.append(hate_no_mean)
+            mean_vectors_categories.append("hate_no")
+        else:
+            hate_no_mean = None
+
+        if safe_yes_vectors is not None and safe_yes_vectors.size > 0:
+            safe_yes_mean = (
+                np.mean(safe_yes_vectors, axis=0).reshape(1, -1).astype(np.float32)
+            )
+            mean_vectors.append(safe_yes_mean)
+            mean_vectors_categories.append("safe_yes")
+        else:
+            safe_yes_mean = None
+
+        if safe_no_vectors is not None and safe_no_vectors.size > 0:
+            safe_no_mean = (
+                np.mean(safe_no_vectors, axis=0).reshape(1, -1).astype(np.float32)
+            )
+            mean_vectors.append(safe_no_mean)
+            mean_vectors_categories.append("safe_no")
+        else:
+            safe_no_mean = None
 
         # Add steering vectors
         steering_vectors_list = []
+        steering_vector_names = []
+        steering_vector_colors = []
+        steering_vector_labels = []
+
         if all_steering_vectors is not None:
             for name, data in all_steering_vectors.items():
-                steering_vectors_list.append(data["vector"].reshape(1, -1))
+                if "vector" in data and data["vector"] is not None:
+                    # Make sure the steering vector is properly flattened
+                    vector = data["vector"].astype(np.float32)
+                    if len(vector.shape) == 3:
+                        vector = vector.reshape(vector.shape[0], -1)
+                    elif len(vector.shape) == 1:
+                        vector = vector.reshape(1, -1)
+
+                    steering_vectors_list.append(vector)
+                    steering_vector_names.append(name)
+                    steering_vector_colors.append(data.get("color", "#00FF00"))
+                    steering_vector_labels.append(data.get("label", name))
         else:
             # Extract steering vector from data
             steering_vector = data.get("steering_vector", None)
             if steering_vector is not None:
-                steering_vectors_list.append(steering_vector.reshape(1, -1))
+                # Make sure the steering vector is properly flattened
+                steering_vector = steering_vector.astype(np.float32)
+                if len(steering_vector.shape) == 3:
+                    steering_vector = steering_vector.reshape(
+                        steering_vector.shape[0], -1
+                    )
+                elif len(steering_vector.shape) == 1:
+                    steering_vector = steering_vector.reshape(1, -1)
 
-        # Stack all vectors for PCA projection
-        all_mean_steering_vectors = np.vstack(mean_vectors + steering_vectors_list)
+                steering_vectors_list.append(steering_vector)
+                steering_vector_names.append("Steering Vector")
+                steering_vector_colors.append("#00FF00")
+                steering_vector_labels.append("Steering Vector")
+
+        print(
+            f"Number of mean vectors: {len(mean_vectors)}, steering vectors: {len(steering_vectors_list)}"
+        )
+
+        # Check if we have any vectors to show
+        if not mean_vectors and not steering_vectors_list:
+            ax.text(
+                0.5,
+                0.5,
+                "No vectors available for PCA in this strategy",
+                horizontalalignment="center",
+                verticalalignment="center",
+                transform=ax.transAxes,
+            )
+            continue
+
+        # Stack all vectors for PCA projection - proper dimensionality handling
+        all_mean_steering_vectors_list = mean_vectors + steering_vectors_list
+        if all_mean_steering_vectors_list:
+            all_mean_steering_vectors = np.vstack(all_mean_steering_vectors_list)
+        else:
+            continue  # Skip if no vectors to show
+
+        # Ensure proper normalization with same parameters as data points
         all_mean_steering_vectors_reg = (
             all_mean_steering_vectors - all_vectors_mean
         ) / all_vectors_std
 
-        # Apply PCA to get 2D projections
-        try:
-            pca = PCA(n_components=2, svd_solver="full")
-            all_2d = pca.fit_transform(all_vectors_norm)
-            mean_2d = pca.transform(all_mean_steering_vectors_reg)
-        except (ValueError, RuntimeWarning) as e:
-            print(
-                f"Warning in {strategy}: PCA failed with error: {e}. Using simple dimension selection."
-            )
-            # Fallback: handle arrays with small dimensions correctly
-            if all_vectors_norm.shape[1] <= 2:
-                # If input has only 1 or 2 dimensions, use them directly
-                if all_vectors_norm.shape[1] == 1:
-                    # For 1D data, create a synthetic second dimension with small random values
-                    all_2d = np.column_stack(
-                        [
-                            all_vectors_norm[:, 0],
-                            np.random.normal(0, 0.01, size=all_vectors_norm.shape[0]),
-                        ]
-                    )
-                    mean_2d = np.column_stack(
-                        [
-                            all_mean_steering_vectors_reg[:, 0],
-                            np.random.normal(
-                                0, 0.01, size=all_mean_steering_vectors_reg.shape[0]
-                            ),
-                        ]
-                    )
-                else:
-                    # For 2D data, use both dimensions
-                    all_2d = all_vectors_norm
-                    mean_2d = all_mean_steering_vectors_reg
-            else:
-                # For higher dimensional data, select two dimensions with highest variance
-                var = np.var(all_vectors_norm, axis=0)
-                idx = np.argsort(var)[-2:]
-                all_2d = all_vectors_norm[:, idx]
-                mean_2d = all_mean_steering_vectors_reg[:, idx]
+        # Apply PCA to get 2D projections using robust approach
+        # Apply PCA to reduce to 2D with robust solver
+        pca = PCA(n_components=2, svd_solver="arpack")
+        pca.fit(all_vectors_norm)  # Fit on all data points
+
+        # Transform both data points and vectors
+        all_2d = pca.transform(all_vectors_norm)
+        mean_2d = pca.transform(all_mean_steering_vectors_reg)
+
+        print(f"PCA successful for {strategy}")
 
         # Split the projected points back to their categories
         start_idx = 0
+        hate_yes_2d = np.array([])
+        hate_no_2d = np.array([])
+        safe_yes_2d = np.array([])
+        safe_no_2d = np.array([])
 
         # Extract 2D coordinates for each category
-        hate_yes_2d = all_2d[start_idx : start_idx + len(hate_yes_vectors)]
-        start_idx += len(hate_yes_vectors)
+        if hate_yes_vectors is not None and hate_yes_vectors.size > 0:
+            end_idx = start_idx + len(hate_yes_vectors)
+            hate_yes_2d = all_2d[start_idx:end_idx]
+            start_idx = end_idx
 
-        hate_no_2d = all_2d[start_idx : start_idx + len(hate_no_vectors)]
-        start_idx += len(hate_no_vectors)
+        if hate_no_vectors is not None and hate_no_vectors.size > 0:
+            end_idx = start_idx + len(hate_no_vectors)
+            hate_no_2d = all_2d[start_idx:end_idx]
+            start_idx = end_idx
 
-        safe_yes_2d = all_2d[start_idx : start_idx + len(safe_yes_vectors)]
-        start_idx += len(safe_yes_vectors)
+        if safe_yes_vectors is not None and safe_yes_vectors.size > 0:
+            end_idx = start_idx + len(safe_yes_vectors)
+            safe_yes_2d = all_2d[start_idx:end_idx]
+            start_idx = end_idx
 
-        safe_no_2d = all_2d[start_idx : start_idx + len(safe_no_vectors)]
+        if safe_no_vectors is not None and safe_no_vectors.size > 0:
+            end_idx = start_idx + len(safe_no_vectors)
+            safe_no_2d = all_2d[start_idx:end_idx]
 
         # Plot each category separately with consistent styling
         for category, points_2d in [
@@ -1336,76 +1185,60 @@ def plot_vectors_all_strategies(
                 )
 
         # Plot mean vectors
-        mean_idx = 0
-        for category, mean_vector in [
-            ("hate_yes", hate_yes_mean),
-            ("hate_no", hate_no_mean),
-            ("safe_yes", safe_yes_mean),
-            ("safe_no", safe_no_mean),
-        ]:
-            if mean_vector is not None and mean_idx < len(mean_2d):
-                style = category_styles[category]
-                mean_2d_point = mean_2d[mean_idx]
+        for idx, (category, mean_point) in enumerate(
+            zip(mean_vectors_categories, mean_2d[: len(mean_vectors)])
+        ):
+            style = category_styles[category]
 
-                # Each category has its own label, ensuring each appears separately in the legend
-                unique_label = f"{category} Mean Vector"
+            # Each category has its own label, ensuring each appears separately in the legend
+            unique_label = f"{style['label']} Mean"
+            print(
+                f"Plotting {unique_label} at coordinates: ({mean_point[0]:.4f}, {mean_point[1]:.4f})"
+            )
 
-                ax.quiver(
-                    0,
-                    0,
-                    mean_2d_point[0],
-                    mean_2d_point[1],
-                    color=style["color"],
-                    label=unique_label,
-                    scale_units="xy",
-                    scale=1,  # Smaller scale makes arrows larger
-                    width=0.02,  # Thicker arrow
-                    headwidth=8,  # Larger head width
-                    headlength=10,  # Larger head length
-                    alpha=1.0,
-                    zorder=20,  # Higher zorder to draw above other elements
-                )
-                mean_idx += 1
+            ax.quiver(
+                0,
+                0,
+                mean_point[0],
+                mean_point[1],
+                color=style["color"],
+                label=unique_label,
+                scale_units="xy",
+                scale=1,
+                width=0.015,
+                headwidth=5,
+                headlength=7,
+                zorder=50,
+                alpha=1.0,
+            )
 
         # Plot steering vectors
-        steering_idx = mean_idx
-        if all_steering_vectors is not None:
-            for name, data in all_steering_vectors.items():
-                if steering_idx < len(mean_2d):
-                    ax.quiver(
-                        0,
-                        0,
-                        mean_2d[steering_idx][0],
-                        mean_2d[steering_idx][1],
-                        color=data["color"],
-                        label=data["label"],
-                        scale_units="xy",
-                        scale=1,  # Smaller scale makes arrows larger
-                        width=0.02,  # Thicker arrow
-                        headwidth=8,  # Larger head width
-                        headlength=10,  # Larger head length
-                        alpha=1.0,
-                        zorder=21,  # Higher zorder to draw above other elements
-                    )
-                    steering_idx += 1
-        elif steering_vectors_list:
-            # Plot default steering vector if specific ones aren't provided
-            if steering_idx < len(mean_2d):
-                ax.quiver(
-                    0,
-                    0,
-                    mean_2d[steering_idx][0],
-                    mean_2d[steering_idx][1],
-                    color="#00FF00",  # Green for steering vector
-                    label="Steering Vector",
-                    scale_units="xy",
-                    scale=1,  # Smaller scale makes arrows larger
-                    width=0.02,  # Thicker arrow
-                    headwidth=8,  # Larger head width
-                    headlength=10,  # Larger head length
-                    alpha=1.0,
-                    zorder=21,  # Higher zorder to draw above other elements
-                )
+        offset = len(mean_vectors)
+        for idx, (name, color, label, vector_point) in enumerate(
+            zip(
+                steering_vector_names,
+                steering_vector_colors,
+                steering_vector_labels,
+                mean_2d[offset : offset + len(steering_vectors_list)],
+            )
+        ):
+            print(
+                f"Plotting steering vector {name} at coordinates: ({vector_point[0]:.4f}, {vector_point[1]:.4f})"
+            )
+            ax.quiver(
+                0,
+                0,
+                vector_point[0],
+                vector_point[1],
+                color=color,
+                label=label,
+                scale_units="xy",
+                scale=1,
+                width=0.015,
+                headwidth=5,
+                headlength=7,
+                zorder=50,
+            )
 
         # Set axis properties
         ax.set_title(f"{title} (Layer {layer_idx})")
@@ -1415,8 +1248,13 @@ def plot_vectors_all_strategies(
         ax.grid(True, alpha=0.3)
 
         # Calculate axis limits from all data points
-        all_points = np.vstack([hate_yes_2d, hate_no_2d, safe_yes_2d, safe_no_2d])
-        if len(all_points) > 0:
+        all_points_list = []
+        for points in [hate_yes_2d, hate_no_2d, safe_yes_2d, safe_no_2d]:
+            if len(points) > 0:
+                all_points_list.append(points)
+
+        if all_points_list:
+            all_points = np.vstack(all_points_list)
             x_min, x_max = np.min(all_points[:, 0]), np.max(all_points[:, 0])
             y_min, y_max = np.min(all_points[:, 1]), np.max(all_points[:, 1])
             x_margin = (x_max - x_min) * 0.1
@@ -1448,6 +1286,1258 @@ def plot_vectors_all_strategies(
 
     if save_path:
         plt.savefig(save_path, dpi=300, bbox_inches="tight")
+        print(f"Saved vector plot with all strategies to {save_path}")
 
     plt.close()  # Close the plot to avoid memory issues
+    return fig
+
+
+def combine_steering_plots(plot_dir, layer_idx, strategy="last-token"):
+    """
+    Create a combined plot with all steering vector types in a single figure with subplots in one row.
+
+    Args:
+        plot_dir: Directory to save the combined plot
+        layer_idx: Layer index
+        strategy: Embedding strategy used
+
+    Returns:
+        fig, axes, combined_path where combined_path will be "{plot_dir}/layer_{layer_idx}_{strategy}_all_steering_combined.png"
+    """
+
+    import matplotlib.pyplot as plt
+
+    # Define the transformation types to include
+    transformations = [
+        "combined",
+        "hate_yes_to_safe_yes",
+        "safe_no_to_hate_no",
+        "hate_no_to_hate_yes",
+        "safe_yes_to_safe_no",
+    ]
+
+    # Create names for the transformations with readable titles
+    transformation_titles = {
+        "combined": "(Hate Yes + Safe No) → (Safe Yes + Hate No)",
+        "hate_yes_to_safe_yes": "Hate Yes → Safe Yes",
+        "safe_no_to_hate_no": "Safe No → Hate No",
+        "hate_no_to_hate_yes": "Hate No → Hate Yes",
+        "safe_yes_to_safe_no": "Safe Yes → Safe No",
+    }
+
+    # Create figure with subplots in one row
+    fig, axes = plt.subplots(
+        1, len(transformations), figsize=(7 * len(transformations), 6)
+    )
+
+    # Set figure title
+    fig.suptitle(
+        f"Steering Vectors - Layer {layer_idx} ({strategy} strategy)", fontsize=16
+    )
+
+    # Set each subplot title
+    for i, trans in enumerate(transformations):
+        axes[i].set_title(transformation_titles[trans], fontsize=12)
+        axes[i].axis(
+            "off"
+        )  # Placeholder, actual plots will be filled by plot_individual_steering_vectors
+
+    # Adjust layout
+    plt.tight_layout(rect=(0, 0, 1, 0.95))  # Make room for the suptitle
+
+    # Save the combined figure path for returning
+    combined_path = os.path.join(
+        plot_dir, f"layer_{layer_idx}_{strategy}_all_steering_combined.png"
+    )
+
+    return fig, axes, combined_path
+
+
+def plot_individual_steering_vectors(
+    plot_dir,
+    layer_idx,
+    all_steering_vectors,
+    hate_yes_vectors,
+    hate_no_vectors,
+    safe_yes_vectors,
+    safe_no_vectors,
+    strategy="last-token",
+):
+    """
+    Create a combined visualization for all 5 steering vector types in a single figure with subplots.
+
+    Args:
+        plot_dir: Directory to save the plots. Example: "plots/"
+        layer_idx: Layer index
+        all_steering_vectors: Dictionary of steering vectors
+        hate_yes_vectors: Vectors for hate_yes statements
+        safe_yes_vectors: Vectors for safe_yes statements
+        hate_no_vectors: Vectors for hate_no statements
+        safe_no_vectors: Vectors for safe_no statements
+        strategy: Embedding strategy
+
+    Returns:
+        combined_path: Path to the saved plot. Example: "plots/layer_0_last-token_all_steering_combined.png"
+        combined_path: Path to the saved plot. Example: "plots/layer_0_first-token_all_steering_combined.png"
+        combined_path: Path to the saved plot. Example: "plots/layer_0_mean_all_steering_combined.png"
+    """
+    import matplotlib.pyplot as plt
+    import numpy as np
+    from sklearn.decomposition import PCA
+
+    # Ensure that all vector inputs are valid
+    if any(
+        v is None
+        for v in [hate_yes_vectors, hate_no_vectors, safe_yes_vectors, safe_no_vectors]
+    ):
+        print("Skipping steering vector plots because some vectors are None")
+        return
+
+    # Get figure and axes for the combined plot
+    fig, axes, combined_path = combine_steering_plots(plot_dir, layer_idx, strategy)
+
+    # Define consistent colors and markers for each category
+    category_styles = {
+        "hate_yes": {
+            "color": "#FF0000",  # Red
+            "marker": "o",  # Round
+            "label": "Hate Yes",
+        },
+        "hate_no": {
+            "color": "#0000FF",  # Blue
+            "marker": "o",  # Round
+            "label": "Hate No",
+        },
+        "safe_yes": {
+            "color": "#0000FF",  # Blue
+            "marker": "^",  # Triangle up
+            "label": "Safe Yes",
+        },
+        "safe_no": {
+            "color": "#FF0000",  # Red
+            "marker": "^",  # Triangle up
+            "label": "Safe No",
+        },
+    }
+
+    # Define transformation pairs to visualize
+    transformations = [
+        {
+            "name": "combined",
+            "title": "(Hate Yes + Safe No) → (Safe Yes + Hate No)",
+            "source_name": "Combined Source",
+            "source_data": np.vstack([hate_yes_vectors, safe_no_vectors]),
+            "source_types": ["hate_yes"] * len(hate_yes_vectors)
+            + ["safe_no"] * len(safe_no_vectors),
+            "target_name": "Combined Target",
+            "target_data": np.vstack([safe_yes_vectors, hate_no_vectors]),
+            "target_types": ["safe_yes"] * len(safe_yes_vectors)
+            + ["hate_no"] * len(hate_no_vectors),
+            "steering_vector": all_steering_vectors["combined"]["vector"],
+            "steering_color": all_steering_vectors["combined"]["color"],
+        },
+        {
+            "name": "hate_yes_to_safe_yes",
+            "title": "Hate Yes → Safe Yes",
+            "source_type": "hate_yes",
+            "source_data": hate_yes_vectors,
+            "target_type": "safe_yes",
+            "target_data": safe_yes_vectors,
+            "steering_vector": all_steering_vectors["hate_yes_to_safe_yes"]["vector"],
+            "steering_color": all_steering_vectors["hate_yes_to_safe_yes"]["color"],
+        },
+        {
+            "name": "safe_no_to_hate_no",
+            "title": "Safe No → Hate No",
+            "source_type": "safe_no",
+            "source_data": safe_no_vectors,
+            "target_type": "hate_no",
+            "target_data": hate_no_vectors,
+            "steering_vector": all_steering_vectors["safe_no_to_hate_no"]["vector"],
+            "steering_color": all_steering_vectors["safe_no_to_hate_no"]["color"],
+        },
+        {
+            "name": "hate_no_to_hate_yes",
+            "title": "Hate No → Hate Yes",
+            "source_type": "hate_no",
+            "source_data": hate_no_vectors,
+            "target_type": "hate_yes",
+            "target_data": hate_yes_vectors,
+            "steering_vector": all_steering_vectors["hate_yes_to_hate_no"]["vector"]
+            * -1,  # Reverse direction
+            "steering_color": "#FF9900",  # Orange (same as original)
+        },
+        {
+            "name": "safe_yes_to_safe_no",
+            "title": "Safe Yes → Safe No",
+            "source_type": "safe_yes",
+            "source_data": safe_yes_vectors,
+            "target_type": "safe_no",
+            "target_data": safe_no_vectors,
+            "steering_vector": all_steering_vectors["safe_no_to_safe_yes"]["vector"]
+            * -1,  # Reverse direction
+            "steering_color": "#00FFCC",  # Teal (same as original)
+        },
+    ]
+
+    # Create a plot for each transformation
+    for i, trans in enumerate(transformations):
+        ax = axes[i]
+        ax.clear()  # Clear the placeholder
+        ax.axis("on")  # Turn axis back on
+
+        # Reshape data if needed
+        source_data = trans["source_data"]
+        target_data = trans["target_data"]
+
+        if len(source_data.shape) == 3:
+            source_data = source_data.reshape(source_data.shape[0], -1)
+
+        if len(target_data.shape) == 3:
+            target_data = target_data.reshape(target_data.shape[0], -1)
+
+        # Combine source and target data for PCA
+        combined_data = np.vstack([source_data, target_data])
+
+        # Normalize data
+        data_mean = np.mean(combined_data, axis=0, keepdims=True)
+        data_std = np.std(combined_data, axis=0, keepdims=True) + 1e-10
+        normalized_data = (combined_data - data_mean) / data_std
+
+        # Calculate source and target means
+        source_mean = np.mean(source_data, axis=0)
+        target_mean = np.mean(target_data, axis=0)
+
+        # Normalize means and steering vector
+        source_mean_norm = (source_mean - data_mean[0]) / data_std[0]
+        target_mean_norm = (target_mean - data_mean[0]) / data_std[0]
+        steering_vector_norm = (trans["steering_vector"] - data_mean[0]) / data_std[0]
+
+        # Apply PCA
+        pca = PCA(n_components=2, svd_solver="full")
+        data_2d = pca.fit_transform(normalized_data)
+
+        # Transform means and steering vector
+        source_mean_2d = pca.transform(source_mean_norm.reshape(1, -1))[0]
+        target_mean_2d = pca.transform(target_mean_norm.reshape(1, -1))[0]
+        steering_vector_2d = pca.transform(steering_vector_norm.reshape(1, -1))[0]
+
+        # Split data back into source and target
+        n_source = len(source_data)
+        source_2d = data_2d[:n_source]
+        target_2d = data_2d[n_source:]
+
+        # Plot points
+        if "source_types" in trans:
+            # For combined case with multiple types
+            for category_type in set(trans["source_types"]):
+                indices = [
+                    i for i, t in enumerate(trans["source_types"]) if t == category_type
+                ]
+                style = category_styles[category_type]
+                ax.scatter(
+                    source_2d[indices, 0],
+                    source_2d[indices, 1],
+                    color=style["color"],
+                    alpha=0.6,
+                    s=40,
+                    marker=style["marker"],
+                    edgecolors="black",
+                    linewidths=0.5,
+                    label=style["label"],
+                    zorder=5,
+                )
+
+            for category_type in set(trans["target_types"]):
+                indices = [
+                    i for i, t in enumerate(trans["target_types"]) if t == category_type
+                ]
+                style = category_styles[category_type]
+                ax.scatter(
+                    target_2d[indices, 0],
+                    target_2d[indices, 1],
+                    color=style["color"],
+                    alpha=0.6,
+                    s=40,
+                    marker=style["marker"],
+                    edgecolors="black",
+                    linewidths=0.5,
+                    label=style["label"],
+                    zorder=5,
+                )
+        else:
+            # Simple case with single type for source and target
+            source_style = category_styles[trans["source_type"]]
+            target_style = category_styles[trans["target_type"]]
+
+            ax.scatter(
+                source_2d[:, 0],
+                source_2d[:, 1],
+                color=source_style["color"],
+                alpha=0.6,
+                s=40,
+                marker=source_style["marker"],
+                edgecolors="black",
+                linewidths=0.5,
+                label=source_style["label"],
+                zorder=5,
+            )
+
+            ax.scatter(
+                target_2d[:, 0],
+                target_2d[:, 1],
+                color=target_style["color"],
+                alpha=0.6,
+                s=40,
+                marker=target_style["marker"],
+                edgecolors="black",
+                linewidths=0.5,
+                label=target_style["label"],
+                zorder=5,
+            )
+
+        # Plot mean vectors
+        if "source_type" in trans:  # Single source/target types
+            source_style = category_styles[trans["source_type"]]
+            target_style = category_styles[trans["target_type"]]
+
+            ax.quiver(
+                0,
+                0,
+                source_mean_2d[0],
+                source_mean_2d[1],
+                color=source_style["color"],
+                label=f"{source_style['label']} Mean",
+                scale_units="xy",
+                scale=1,
+                width=0.015,
+                headwidth=5,
+                headlength=7,
+                zorder=50,
+            )
+
+            ax.quiver(
+                0,
+                0,
+                target_mean_2d[0],
+                target_mean_2d[1],
+                color=target_style["color"],
+                label=f"{target_style['label']} Mean",
+                scale_units="xy",
+                scale=1,
+                width=0.015,
+                headwidth=5,
+                headlength=7,
+                zorder=50,
+            )
+        else:  # Combined source/target
+            ax.quiver(
+                0,
+                0,
+                source_mean_2d[0],
+                source_mean_2d[1],
+                color="#880000",  # Dark red for combined source
+                label=f"{trans['source_name']} Mean",
+                scale_units="xy",
+                scale=1,
+                width=0.015,
+                headwidth=5,
+                headlength=7,
+                zorder=50,
+            )
+
+            ax.quiver(
+                0,
+                0,
+                target_mean_2d[0],
+                target_mean_2d[1],
+                color="#000088",  # Dark blue for combined target
+                label=f"{trans['target_name']} Mean",
+                scale_units="xy",
+                scale=1,
+                width=0.015,
+                headwidth=5,
+                headlength=7,
+                zorder=50,
+            )
+
+        # Plot steering vector
+        ax.quiver(
+            0,
+            0,
+            steering_vector_2d[0],
+            steering_vector_2d[1],
+            color=trans["steering_color"],
+            label="Steering Vector",
+            scale_units="xy",
+            scale=1,
+            width=0.015,
+            headwidth=5,
+            headlength=7,
+            zorder=50,
+        )
+
+        # Set axis limits
+        x_min, x_max = np.min(data_2d[:, 0]), np.max(data_2d[:, 0])
+        y_min, y_max = np.min(data_2d[:, 1]), np.max(data_2d[:, 1])
+        x_margin = (x_max - x_min) * 0.1
+        y_margin = (y_max - y_min) * 0.1
+        ax.set_xlim(x_min - x_margin, x_max + x_margin)
+        ax.set_ylim(y_min - y_margin, y_max + y_margin)
+
+        # Add labels
+        ax.set_xlabel("Principal Component 1")
+        ax.set_ylabel("Principal Component 2")
+        ax.legend(loc="best", fontsize=8)
+        ax.grid(True, alpha=0.3)
+
+    # Add descriptive text
+    fig.text(
+        0.5,
+        0.01,
+        "Red circles: Hate statements with 'Yes', Blue circles: Hate statements with 'No'\n"
+        "Blue triangles: Safe statements with 'Yes', Red triangles: Safe statements with 'No'\n"
+        "Arrows show the steering direction between content types.",
+        ha="center",
+        fontsize=9,
+        bbox=dict(boxstyle="round", facecolor="white", alpha=0.8),
+    )
+
+    # Adjust layout to make room for text
+    plt.tight_layout(rect=(0, 0.05, 1, 0.95))
+
+    # Save combined figure
+    plt.savefig(combined_path, dpi=300, bbox_inches="tight")
+    plt.close(fig)
+
+    print(f"Saved combined steering plot to {combined_path}")
+    return combined_path
+
+
+def plot_all_strategies_all_steering_vectors(
+    plot_dir,
+    layer_idx,
+    representations,
+    all_steering_vectors_by_strategy,
+):
+    """
+    Create a comprehensive visualization of all steering vectors for all embedding strategies.
+
+    Args:
+        plot_dir: Directory to save the plots
+        layer_idx: Layer index
+        representations: Dictionary of representations for each strategy
+        all_steering_vectors_by_strategy: Dictionary of steering vectors for each strategy
+
+    Returns:
+        Path to the saved plot or None if unsuccessful
+    """
+    import matplotlib.pyplot as plt
+    import numpy as np
+    from sklearn.decomposition import PCA
+
+    # Validate input data with explicit checks
+    if not isinstance(representations, dict):
+        print(
+            f"Error: representations must be a dictionary. Got {type(representations)}"
+        )
+        return None
+
+    if len(representations) == 0:
+        print("Error: representations dictionary is empty")
+        return None
+
+    if not isinstance(all_steering_vectors_by_strategy, dict):
+        print(
+            f"Error: all_steering_vectors_by_strategy must be a dictionary. Got {type(all_steering_vectors_by_strategy)}"
+        )
+        return None
+
+    if len(all_steering_vectors_by_strategy) == 0:
+        print("Error: all_steering_vectors_by_strategy dictionary is empty")
+        return None
+
+    # Define strategies and transformations
+    strategies = ["last-token", "first-token", "mean"]
+
+    # Filter strategies to only those available
+    available_strategies = [s for s in strategies if s in representations]
+    if not available_strategies:
+        print(
+            f"Error: No valid strategies found in representations. Available keys: {list(representations.keys())}"
+        )
+        return None
+
+    # Validate steering vectors match strategies
+    for strategy in available_strategies:
+        if strategy not in all_steering_vectors_by_strategy:
+            print(
+                f"Error: Strategy {strategy} not found in all_steering_vectors_by_strategy"
+            )
+            return None
+
+    # Print data diagnostics
+    print(f"All steering vectors keys: {list(all_steering_vectors_by_strategy.keys())}")
+    for strategy in available_strategies:
+        print(
+            f"Data keys for strategy {strategy}: {list(representations[strategy].keys()) if strategy in representations else 'N/A'}"
+        )
+        for key in ["hate_yes", "hate_no", "safe_yes", "safe_no"]:
+            if strategy in representations and key in representations[strategy]:
+                data = representations[strategy][key]
+                if isinstance(data, np.ndarray):
+                    print(f"{strategy} - {key} shape: {data.shape}")
+                else:
+                    print(f"{strategy} - {key} type: {type(data)}")
+
+    # Define transformations
+    transformations = [
+        "combined",
+        "hate_yes_to_safe_yes",
+        "safe_no_to_hate_no",
+        "hate_yes_to_hate_no",
+        "safe_no_to_safe_yes",
+    ]
+
+    # Filter transformations to only those available for all strategies
+    available_transformations = []
+    for trans in transformations:
+        all_have_trans = True
+        for strategy in available_strategies:
+            if strategy not in all_steering_vectors_by_strategy:
+                all_have_trans = False
+                break
+            if trans not in all_steering_vectors_by_strategy[strategy]:
+                all_have_trans = False
+                break
+        if all_have_trans:
+            available_transformations.append(trans)
+
+    if not available_transformations:
+        print("Error: No common transformations available across all strategies")
+        return None
+
+    # Create readable titles for transformations
+    transformation_titles = {
+        "combined": "(Hate Yes + Safe No) → (Safe Yes + Hate No)",
+        "hate_yes_to_safe_yes": "Hate Yes → Safe Yes",
+        "safe_no_to_hate_no": "Safe No → Hate No",
+        "hate_yes_to_hate_no": "Hate Yes → Hate No",
+        "safe_no_to_safe_yes": "Safe No → Safe Yes",
+    }
+
+    # Define consistent colors and markers for each category
+    category_styles = {
+        "hate_yes": {
+            "color": "#FF0000",  # Red
+            "marker": "o",  # Round
+            "label": "Hate Yes",
+        },
+        "hate_no": {
+            "color": "#0000FF",  # Blue
+            "marker": "o",  # Round
+            "label": "Hate No",
+        },
+        "safe_yes": {
+            "color": "#0000FF",  # Blue
+            "marker": "^",  # Triangle up
+            "label": "Safe Yes",
+        },
+        "safe_no": {
+            "color": "#FF0000",  # Red
+            "marker": "^",  # Triangle up
+            "label": "Safe No",
+        },
+    }
+
+    # Create figure with subplots - strategies as rows, transformations as columns
+    fig, axes = plt.subplots(
+        len(available_strategies),
+        len(available_transformations),
+        figsize=(6 * len(available_transformations), 5 * len(available_strategies)),
+    )
+
+    # Handle case with only one subplot
+    if len(available_strategies) == 1 and len(available_transformations) == 1:
+        axes = np.array([[axes]])
+    elif len(available_strategies) == 1:
+        axes = np.array([axes])
+    elif len(available_transformations) == 1:
+        axes = np.array([[ax] for ax in axes])
+
+    # Process each strategy and transformation
+    for row_idx, strategy in enumerate(available_strategies):
+        # Get representations for this strategy
+        strategy_reps = representations[strategy]
+
+        # Validate required data for this strategy
+        required_keys = ["hate_yes", "hate_no", "safe_yes", "safe_no"]
+        if not all(key in strategy_reps for key in required_keys):
+            print(f"Error: Missing required data keys for strategy {strategy}")
+            available_keys = (
+                list(strategy_reps.keys()) if isinstance(strategy_reps, dict) else "N/A"
+            )
+            print(f"Available keys: {available_keys}")
+            for col_idx in range(len(available_transformations)):
+                ax = axes[row_idx][col_idx]
+                ax.text(0.5, 0.5, "Missing data", ha="center", va="center")
+                ax.set_title(f"{strategy} - Missing data")
+            continue
+
+        # Make sure all vector data are numpy arrays
+        for key in required_keys:
+            if not isinstance(strategy_reps[key], np.ndarray):
+                print(
+                    f"Error: {strategy} - {key} is not a numpy array. Got {type(strategy_reps[key])}"
+                )
+                for col_idx in range(len(available_transformations)):
+                    ax = axes[row_idx][col_idx]
+                    ax.text(
+                        0.5, 0.5, f"Invalid {key} data type", ha="center", va="center"
+                    )
+                    ax.set_title(f"{strategy} - Invalid data")
+                continue
+
+        # Extract vectors
+        hate_yes_vectors = strategy_reps["hate_yes"]
+        hate_no_vectors = strategy_reps["hate_no"]
+        safe_yes_vectors = strategy_reps["safe_yes"]
+        safe_no_vectors = strategy_reps["safe_no"]
+
+        # Get steering vectors for this strategy
+        if strategy not in all_steering_vectors_by_strategy:
+            print(f"Error: No steering vectors for strategy {strategy}")
+            for col_idx in range(len(available_transformations)):
+                ax = axes[row_idx][col_idx]
+                ax.text(0.5, 0.5, "No steering vectors", ha="center", va="center")
+                ax.set_title(f"{strategy} - No steering")
+            continue
+
+        strategy_steering_vectors = all_steering_vectors_by_strategy[strategy]
+
+        # For each transformation
+        for col_idx, trans_name in enumerate(available_transformations):
+            if trans_name not in strategy_steering_vectors:
+                print(
+                    f"Error: Transformation {trans_name} not found for strategy {strategy}"
+                )
+                ax = axes[row_idx][col_idx]
+                ax.text(0.5, 0.5, f"Missing {trans_name}", ha="center", va="center")
+                ax.set_title(f"{strategy} - Missing transformation")
+                continue
+
+            ax = axes[row_idx][col_idx]
+
+            # Set transformation-specific data
+            if trans_name == "combined":
+                source_data = np.vstack([hate_yes_vectors, safe_no_vectors])
+                source_types = ["hate_yes"] * len(hate_yes_vectors) + ["safe_no"] * len(
+                    safe_no_vectors
+                )
+                target_data = np.vstack([safe_yes_vectors, hate_no_vectors])
+                target_types = ["safe_yes"] * len(safe_yes_vectors) + ["hate_no"] * len(
+                    hate_no_vectors
+                )
+
+                if "vector" not in strategy_steering_vectors[trans_name]:
+                    print(f"Error: Missing vector in {strategy} - {trans_name}")
+                    ax.text(0.5, 0.5, "Missing vector data", ha="center", va="center")
+                    ax.set_title(f"{strategy} - Missing vector data")
+                    continue
+
+                steering_vector = strategy_steering_vectors[trans_name]["vector"]
+                steering_color = strategy_steering_vectors[trans_name].get(
+                    "color", "#00FF00"
+                )  # Default green
+                use_combined = True
+            elif trans_name == "hate_yes_to_safe_yes":
+                source_data = hate_yes_vectors
+                source_type = "hate_yes"
+                target_data = safe_yes_vectors
+                target_type = "safe_yes"
+
+                if "vector" not in strategy_steering_vectors[trans_name]:
+                    print(f"Error: Missing vector in {strategy} - {trans_name}")
+                    ax.text(0.5, 0.5, "Missing vector data", ha="center", va="center")
+                    ax.set_title(f"{strategy} - Missing vector data")
+                    continue
+
+                steering_vector = strategy_steering_vectors[trans_name]["vector"]
+                steering_color = strategy_steering_vectors[trans_name].get(
+                    "color", "#00FF00"
+                )
+                use_combined = False
+            elif trans_name == "safe_no_to_hate_no":
+                source_data = safe_no_vectors
+                source_type = "safe_no"
+                target_data = hate_no_vectors
+                target_type = "hate_no"
+
+                if "vector" not in strategy_steering_vectors[trans_name]:
+                    print(f"Error: Missing vector in {strategy} - {trans_name}")
+                    ax.text(0.5, 0.5, "Missing vector data", ha="center", va="center")
+                    ax.set_title(f"{strategy} - Missing vector data")
+                    continue
+
+                steering_vector = strategy_steering_vectors[trans_name]["vector"]
+                steering_color = strategy_steering_vectors[trans_name].get(
+                    "color", "#00FF00"
+                )
+                use_combined = False
+            elif trans_name == "hate_yes_to_hate_no":
+                source_data = hate_yes_vectors
+                source_type = "hate_yes"
+                target_data = hate_no_vectors
+                target_type = "hate_no"
+
+                if (
+                    trans_name in strategy_steering_vectors
+                    and "vector" in strategy_steering_vectors[trans_name]
+                ):
+                    steering_vector = strategy_steering_vectors[trans_name]["vector"]
+                    steering_color = strategy_steering_vectors[trans_name].get(
+                        "color", "#FF9900"
+                    )  # Orange
+                else:
+                    # Fallback if this specific vector isn't available
+                    if (
+                        "combined" not in strategy_steering_vectors
+                        or "vector" not in strategy_steering_vectors["combined"]
+                    ):
+                        print(
+                            f"Error: Missing vector in {strategy} - {trans_name} and no fallback available"
+                        )
+                        ax.text(
+                            0.5, 0.5, "Missing vector data", ha="center", va="center"
+                        )
+                        ax.set_title(f"{strategy} - Missing vector data")
+                        continue
+
+                    steering_vector = strategy_steering_vectors["combined"]["vector"]
+                    steering_color = "#FF9900"  # Orange
+                use_combined = False
+            elif trans_name == "safe_no_to_safe_yes":
+                source_data = safe_no_vectors
+                source_type = "safe_no"
+                target_data = safe_yes_vectors
+                target_type = "safe_yes"
+
+                if (
+                    trans_name in strategy_steering_vectors
+                    and "vector" in strategy_steering_vectors[trans_name]
+                ):
+                    steering_vector = strategy_steering_vectors[trans_name]["vector"]
+                    steering_color = strategy_steering_vectors[trans_name].get(
+                        "color", "#00FFCC"
+                    )  # Teal
+                else:
+                    # Fallback if this specific vector isn't available
+                    if (
+                        "combined" not in strategy_steering_vectors
+                        or "vector" not in strategy_steering_vectors["combined"]
+                    ):
+                        print(
+                            f"Error: Missing vector in {strategy} - {trans_name} and no fallback available"
+                        )
+                        ax.text(
+                            0.5, 0.5, "Missing vector data", ha="center", va="center"
+                        )
+                        ax.set_title(f"{strategy} - Missing vector data")
+                        continue
+
+                    steering_vector = strategy_steering_vectors["combined"]["vector"]
+                    steering_color = "#00FFCC"  # Teal
+                use_combined = False
+            else:
+                print(f"Error: Unknown transformation: {trans_name}")
+                ax.text(0.5, 0.5, f"Unknown {trans_name}", ha="center", va="center")
+                ax.set_title(f"{strategy} - Unknown transformation")
+                continue
+
+            # Check if steering vector is a numpy array
+            if not isinstance(steering_vector, np.ndarray):
+                print(
+                    f"Error: Steering vector for {strategy} - {trans_name} is not a numpy array. Got {type(steering_vector)}"
+                )
+                ax.text(0.5, 0.5, "Invalid steering vector", ha="center", va="center")
+                ax.set_title(f"{strategy} - Invalid data")
+                continue
+
+            # Reshape data if needed
+            if len(source_data.shape) == 3:
+                source_data = source_data.reshape(source_data.shape[0], -1)
+            if len(target_data.shape) == 3:
+                target_data = target_data.reshape(target_data.shape[0], -1)
+            if len(steering_vector.shape) > 1:
+                steering_vector = steering_vector.reshape(-1)
+
+            # Combine source and target data for PCA
+            combined_data = np.vstack([source_data, target_data])
+
+            # Check data validity
+            if combined_data.size == 0:
+                print(f"Error: Empty combined data for {strategy} - {trans_name}")
+                ax.text(0.5, 0.5, "Empty data", ha="center", va="center")
+                ax.set_title(
+                    f"{strategy} - {transformation_titles.get(trans_name, trans_name)}"
+                )
+                continue
+
+            if np.isnan(combined_data).any():
+                print(
+                    f"Error: NaN values in combined data for {strategy} - {trans_name}"
+                )
+                ax.text(0.5, 0.5, "NaN values in data", ha="center", va="center")
+                ax.set_title(
+                    f"{strategy} - {transformation_titles.get(trans_name, trans_name)}"
+                )
+                continue
+
+            if np.isinf(combined_data).any():
+                print(
+                    f"Error: Infinite values in combined data for {strategy} - {trans_name}"
+                )
+                ax.text(0.5, 0.5, "Infinite values in data", ha="center", va="center")
+                ax.set_title(
+                    f"{strategy} - {transformation_titles.get(trans_name, trans_name)}"
+                )
+                continue
+
+            # Normalize data
+            data_mean = np.mean(combined_data, axis=0, keepdims=True)
+            data_std = np.std(combined_data, axis=0, keepdims=True) + 1e-10
+            normalized_data = (combined_data - data_mean) / data_std
+
+            # Calculate source and target means
+            source_mean = np.mean(source_data, axis=0)
+            target_mean = np.mean(target_data, axis=0)
+
+            # Normalize means and steering vector
+            source_mean_norm = (source_mean - data_mean[0]) / data_std[0]
+            target_mean_norm = (target_mean - data_mean[0]) / data_std[0]
+
+            # Check if steering vector dimensions match
+            if steering_vector.shape[0] != data_mean.shape[1]:
+                print(
+                    f"Error: Dimension mismatch - steering vector shape: {steering_vector.shape}, required shape: ({data_mean.shape[1]},)"
+                )
+                ax.text(0.5, 0.5, "Dimension mismatch", ha="center", va="center")
+                ax.set_title(
+                    f"{strategy} - {transformation_titles.get(trans_name, trans_name)}"
+                )
+                continue
+
+            steering_vector_norm = (steering_vector - data_mean[0]) / data_std[0]
+
+            # Apply PCA
+            # Check if data is suitable for PCA
+            if normalized_data.shape[0] < 2 or normalized_data.shape[1] < 2:
+                print(f"Error: Insufficient data for PCA: {normalized_data.shape}")
+                ax.text(0.5, 0.5, "Insufficient data for PCA", ha="center", va="center")
+                ax.set_title(
+                    f"{strategy} - {transformation_titles.get(trans_name, trans_name)}"
+                )
+                continue
+
+            pca = PCA(n_components=2, svd_solver="full")
+
+            # Handle potential PCA errors explicitly
+            if np.all(np.std(normalized_data, axis=0) < 1e-10):
+                print(f"Error: Zero variance in data for {strategy} - {trans_name}")
+                ax.text(0.5, 0.5, "Zero variance in data", ha="center", va="center")
+                ax.set_title(
+                    f"{strategy} - {transformation_titles.get(trans_name, trans_name)}"
+                )
+                continue
+
+            data_2d = pca.fit_transform(normalized_data)
+
+            # Transform means and steering vector
+            if source_mean_norm.shape != (normalized_data.shape[1],):
+                print(
+                    f"Error: Source mean shape mismatch: {source_mean_norm.shape} vs expected {(normalized_data.shape[1],)}"
+                )
+                ax.text(0.5, 0.5, "Source mean shape error", ha="center", va="center")
+                ax.set_title(
+                    f"{strategy} - {transformation_titles.get(trans_name, trans_name)}"
+                )
+                continue
+
+            if target_mean_norm.shape != (normalized_data.shape[1],):
+                print(
+                    f"Error: Target mean shape mismatch: {target_mean_norm.shape} vs expected {(normalized_data.shape[1],)}"
+                )
+                ax.text(0.5, 0.5, "Target mean shape error", ha="center", va="center")
+                ax.set_title(
+                    f"{strategy} - {transformation_titles.get(trans_name, trans_name)}"
+                )
+                continue
+
+            if steering_vector_norm.shape != (normalized_data.shape[1],):
+                print(
+                    f"Error: Steering vector shape mismatch: {steering_vector_norm.shape} vs expected {(normalized_data.shape[1],)}"
+                )
+                ax.text(
+                    0.5, 0.5, "Steering vector shape error", ha="center", va="center"
+                )
+                ax.set_title(
+                    f"{strategy} - {transformation_titles.get(trans_name, trans_name)}"
+                )
+                continue
+
+            source_mean_2d = pca.transform(source_mean_norm.reshape(1, -1))[0]
+            target_mean_2d = pca.transform(target_mean_norm.reshape(1, -1))[0]
+            steering_vector_2d = pca.transform(steering_vector_norm.reshape(1, -1))[0]
+
+            print(f"PCA successful for {strategy}")
+
+            # Split data back into source and target
+            n_source = len(source_data)
+            source_2d = data_2d[:n_source]
+            target_2d = data_2d[n_source:]
+
+            # Plot points
+            if use_combined:
+                # For combined case with multiple types
+                for category_type in set(source_types):
+                    indices = [
+                        i for i, t in enumerate(source_types) if t == category_type
+                    ]
+                    style = category_styles[category_type]
+                    ax.scatter(
+                        source_2d[indices, 0],
+                        source_2d[indices, 1],
+                        color=style["color"],
+                        alpha=0.6,
+                        s=40,
+                        marker=style["marker"],
+                        edgecolors="black",
+                        linewidths=0.5,
+                        label=f"{style['label']} (source)",
+                    )
+
+                for category_type in set(target_types):
+                    indices = [
+                        i for i, t in enumerate(target_types) if t == category_type
+                    ]
+                    style = category_styles[category_type]
+                    ax.scatter(
+                        target_2d[indices, 0],
+                        target_2d[indices, 1],
+                        color=style["color"],
+                        alpha=0.6,
+                        s=40,
+                        marker=style["marker"],
+                        edgecolors="white",
+                        linewidths=0.5,
+                        label=f"{style['label']} (target)",
+                    )
+            else:
+                # For single-category transformations
+                style_source = category_styles[source_type]
+                style_target = category_styles[target_type]
+
+                ax.scatter(
+                    source_2d[:, 0],
+                    source_2d[:, 1],
+                    color=style_source["color"],
+                    alpha=0.6,
+                    s=40,
+                    marker=style_source["marker"],
+                    edgecolors="black",
+                    linewidths=0.5,
+                    label=f"{style_source['label']} (source)",
+                )
+
+                ax.scatter(
+                    target_2d[:, 0],
+                    target_2d[:, 1],
+                    color=style_target["color"],
+                    alpha=0.6,
+                    s=40,
+                    marker=style_target["marker"],
+                    edgecolors="white",
+                    linewidths=0.5,
+                    label=f"{style_target['label']} (target)",
+                )
+
+            # Plot source and target centroids
+            ax.scatter(
+                source_mean_2d[0],
+                source_mean_2d[1],
+                color="black",
+                s=100,
+                marker="*",
+                label="Source Mean",
+            )
+            ax.scatter(
+                target_mean_2d[0],
+                target_mean_2d[1],
+                color="white",
+                s=100,
+                marker="*",
+                edgecolors="black",
+                label="Target Mean",
+            )
+
+            # Plot steering vector as arrow
+            print(
+                f"Plotting {trans_name} at coordinates: ({steering_vector_2d[0]}, {steering_vector_2d[1]})"
+            )
+            vector_scale = 0.5  # Adjust scale as needed
+            ax.arrow(
+                source_mean_2d[0],
+                source_mean_2d[1],
+                (target_mean_2d[0] - source_mean_2d[0]) * vector_scale,
+                (target_mean_2d[1] - source_mean_2d[1]) * vector_scale,
+                head_width=0.2,
+                head_length=0.3,
+                fc=steering_color,
+                ec=steering_color,
+                linewidth=2,
+                length_includes_head=True,
+                label="Direction",
+            )
+
+            # Set title and legend for the subplot
+            ax.set_title(
+                f"{strategy} - {transformation_titles.get(trans_name, trans_name)}"
+            )
+            ax.set_xlabel(f"PC1 ({pca.explained_variance_ratio_[0]:.2%})")
+            ax.set_ylabel(f"PC2 ({pca.explained_variance_ratio_[1]:.2%})")
+            ax.legend(loc="upper right", fontsize=8)
+            ax.grid(alpha=0.3)
+
+    plt.tight_layout()
+    output_path = os.path.join(
+        plot_dir, f"layer_{layer_idx}_all_strategies_all_steering_vectors.png"
+    )
+    plt.savefig(output_path, dpi=300, bbox_inches="tight")
+    plt.close()
+    print(f"Saved comprehensive steering vector plot to {output_path}")
+    return output_path
+
+
+def visualize_detailed_decision_boundary(
+    ccs,
+    hate_yes_vectors,
+    hate_no_vectors,
+    safe_yes_vectors,
+    safe_no_vectors,
+    steering_vector,
+    layer_idx,
+    log_base=None,
+):
+    """Create a more detailed decision boundary visualization that separates the four data types.
+
+    Args:
+        ccs: CCS probe
+        hate_yes_vectors: Vectors for hate content with "yes"
+        hate_no_vectors: Vectors for hate content with "no"
+        safe_yes_vectors: Vectors for safe content with "yes"
+        safe_no_vectors: Vectors for safe content with "no"
+        steering_vector: The calculated steering vector
+        layer_idx: Layer index for title
+        log_base: Base path for saving the plot
+    """
+    # Create figure and axes
+    fig, ax = plt.subplots(figsize=(12, 10))
+
+    # Ensure arrays are float32
+    hate_yes_vectors = hate_yes_vectors.astype(np.float32)
+    hate_no_vectors = hate_no_vectors.astype(np.float32)
+    safe_yes_vectors = safe_yes_vectors.astype(np.float32)
+    safe_no_vectors = safe_no_vectors.astype(np.float32)
+    steering_vector = steering_vector.astype(np.float32)
+
+    # Properly flatten vectors if they're 3D
+    if hate_yes_vectors is not None and len(hate_yes_vectors.shape) == 3:
+        hate_yes_vectors = hate_yes_vectors.reshape(hate_yes_vectors.shape[0], -1)
+    if hate_no_vectors is not None and len(hate_no_vectors.shape) == 3:
+        hate_no_vectors = hate_no_vectors.reshape(hate_no_vectors.shape[0], -1)
+    if safe_yes_vectors is not None and len(safe_yes_vectors.shape) == 3:
+        safe_yes_vectors = safe_yes_vectors.reshape(safe_yes_vectors.shape[0], -1)
+    if safe_no_vectors is not None and len(safe_no_vectors.shape) == 3:
+        safe_no_vectors = safe_no_vectors.reshape(safe_no_vectors.shape[0], -1)
+
+    # Normalize steering vector
+    steering_norm = np.linalg.norm(steering_vector)
+    if steering_norm > 1e-10:
+        steering_vector = steering_vector / steering_norm
+    steering_vector_flat = steering_vector.flatten()
+
+    # Combine all vectors for PCA
+    X_combined = np.vstack(
+        [hate_yes_vectors, hate_no_vectors, safe_yes_vectors, safe_no_vectors]
+    )
+
+    # Create labels (0=hate_yes, 1=hate_no, 2=safe_yes, 3=safe_no)
+    labels = np.concatenate(
+        [
+            np.zeros(len(hate_yes_vectors)),
+            np.ones(len(hate_no_vectors)),
+            np.full(len(safe_yes_vectors), 2),
+            np.full(len(safe_no_vectors), 3),
+        ]
+    )
+
+    # Project data to 2D for visualization
+    # First component: steering vector direction
+    projection1 = np.array(
+        [np.dot(x.flatten(), steering_vector_flat) for x in X_combined]
+    )
+
+    # Compute residuals for second direction
+    residuals = X_combined - np.outer(projection1, steering_vector_flat)
+
+    # Add small regularization to avoid numerical issues
+    epsilon = 1e-8
+    residuals += np.random.normal(0, epsilon, residuals.shape)
+
+    # Find second direction (orthogonal to steering vector)
+    pca = PCA(n_components=1, svd_solver="arpack")
+    pca.fit(residuals)
+    second_direction = pca.components_[0]
+
+    # Project onto second direction
+    projection2 = np.array(
+        [np.dot(x.flatten(), second_direction.flatten()) for x in X_combined]
+    )
+
+    # Create 2D projections
+    X_2d = np.column_stack([projection1, projection2])
+
+    # Create grid for decision boundary
+    x_min, x_max = X_2d[:, 0].min() - 1, X_2d[:, 0].max() + 1
+    y_min, y_max = X_2d[:, 1].min() - 1, X_2d[:, 1].max() + 1
+    xx, yy = np.meshgrid(np.linspace(x_min, x_max, 100), np.linspace(y_min, y_max, 100))
+
+    # Reconstruct grid points in original space
+    grid_points = np.array([xx.ravel(), yy.ravel()]).T
+    original_space = np.outer(grid_points[:, 0], steering_vector_flat) + np.outer(
+        grid_points[:, 1], second_direction.flatten()
+    )
+    original_space = original_space.astype(np.float32)
+
+    # Predict using CCS probe
+    grid_preds, grid_confidences = ccs.predict_from_vectors(original_space)
+    grid_preds = grid_preds.reshape(xx.shape)
+    grid_confidences = grid_confidences.reshape(xx.shape)
+
+    # Plot decision boundary with higher contrast
+    contour_fill = ax.contourf(
+        xx, yy, grid_preds, alpha=0.5, cmap="RdBu_r", levels=np.linspace(0, 1, 11)
+    )
+
+    # Add explicit decision boundary line
+    decision_boundary = ax.contour(
+        xx,
+        yy,
+        grid_confidences,
+        levels=[0.5],
+        colors="black",
+        linestyles="dashed",
+        linewidths=2,
+    )
+
+    # Add colorbar
+    cbar = plt.colorbar(contour_fill, ax=ax, label="Prediction (0=Hate, 1=Safe)")
+
+    # Define custom colors and markers for each category
+    category_colors = {
+        0: "#FF0000",  # Hate Yes - Red
+        1: "#0000FF",  # Hate No - Blue
+        2: "#00CCFF",  # Safe Yes - Light Blue
+        3: "#FF00CC",  # Safe No - Pink
+    }
+
+    category_markers = {
+        0: "o",  # Hate Yes - Circle
+        1: "s",  # Hate No - Square
+        2: "^",  # Safe Yes - Triangle up
+        3: "v",  # Safe No - Triangle down
+    }
+
+    category_names = {
+        0: "Hate Yes",
+        1: "Hate No",
+        2: "Safe Yes",
+        3: "Safe No",
+    }
+
+    # Plot each category with distinct color and marker
+    for label_id in np.unique(labels):
+        idx = labels == label_id
+        ax.scatter(
+            X_2d[idx, 0],
+            X_2d[idx, 1],
+            c=category_colors[label_id],
+            marker=category_markers[label_id],
+            s=70,
+            alpha=0.85,
+            edgecolor="black",
+            linewidths=0.5,
+            label=category_names[label_id],
+        )
+
+    # Add steering vector direction
+    ax.arrow(
+        0,
+        0,
+        1,
+        0,
+        color="black",
+        width=0.01,
+        head_width=0.1,
+        head_length=0.1,
+        length_includes_head=True,
+        label="Steering Direction",
+    )
+
+    # Set axis labels and title
+    ax.set_xlabel("Steering Vector Direction")
+    ax.set_ylabel("Orthogonal Direction")
+    ax.set_title(f"Detailed CCS Decision Boundary (Layer {layer_idx})")
+    ax.legend(loc="upper right", fontsize=10)
+
+    # Add descriptive text
+    description = """
+    This plot shows a detailed view of the CCS probe decision boundary with four data types:
+    
+    - Hate Yes (red circles): Hate-labeled statements with positive answers
+    - Hate No (blue squares): Hate-labeled statements with negative answers
+    - Safe Yes (light blue triangles): Safe-labeled statements with positive answers
+    - Safe No (pink triangles): Safe-labeled statements with negative answers
+    
+    The colored background shows the model's predicted classification:
+    - Red regions: classified as hate content
+    - Blue regions: classified as safe content
+    
+    The dashed black line indicates the decision boundary (0.5 probability).
+    
+    An ideal boundary would:
+    1. Clearly separate hate and safe points
+    2. Run perpendicular to the steering direction
+    3. Show clustered points of the same type
+    """
+
+    fig.text(
+        0.5,
+        0.01,
+        description,
+        ha="center",
+        va="bottom",
+        bbox=dict(facecolor="white", alpha=0.8, edgecolor="gray"),
+        wrap=True,
+    )
+
+    # Adjust layout for text
+    plt.tight_layout(rect=(0, 0.18, 1, 1))
+
+    # Save plot if log_base is provided
+    if log_base:
+        plt.savefig(
+            f"{log_base}_detailed_decision_boundary.png", dpi=300, bbox_inches="tight"
+        )
+
     return fig

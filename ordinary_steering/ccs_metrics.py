@@ -357,7 +357,7 @@ def representation_stability(
     """
     # Get original predictions
     X_noise_placeholder = np.zeros_like(X_vectors)  # Not used for prediction
-    original_predictions, _ = ccs.predict(X_vectors, X_noise_placeholder)
+    original_predictions, _ = ccs.predict_from_vectors(X_vectors)
 
     stability_scores = []
 
@@ -367,8 +367,11 @@ def representation_stability(
         noise = np.random.normal(0, perturbation_scale, X_vectors.shape)
         X_perturbed = X_vectors + noise
 
+        # Ensure X_perturbed is float32 to match model weights
+        X_perturbed = X_perturbed.astype(np.float32)
+
         # Get predictions on perturbed input
-        perturbed_predictions, _ = ccs.predict(X_perturbed, X_noise_placeholder)
+        perturbed_predictions, _ = ccs.predict_from_vectors(X_perturbed)
 
         # Calculate stability (% of predictions that remain the same)
         stability = np.mean(original_predictions == perturbed_predictions)
@@ -399,68 +402,58 @@ def fisher_information_analysis(
 
     Example:
         >>> steering_vec = safe_mean - hate_mean
-        >>> analysis = fisher_information_analysis(ccs_probe, X_test, steering_vec)
-        >>> print(f"Maximum sensitivity at: {analysis['max_sensitivity_point']:.2f}")
-        Maximum sensitivity at: 0.75
-        # Interpretation: Highest sensitivity is 75% along the steering direction
+        >>> result = fisher_information_analysis(ccs, X_test, steering_vec)
+        >>> print(f"Max sensitivity at {result['max_sensitivity_point']}")
+        Max sensitivity at 1.25
+        # Interpretation: The model is most sensitive when representations are moved
+        # 1.25 units along the steering vector direction
     """
+    # Ensure all inputs are float32 to match model weights
+    X_vectors = X_vectors.astype(np.float32)
+    direction_vector = direction_vector.astype(np.float32)
+
     # Normalize direction vector
     direction_norm = np.linalg.norm(direction_vector)
     if direction_norm > 1e-10:
         direction_vector = direction_vector / direction_norm
 
-    # Create range of steps
-    alphas = np.linspace(-range_factor, range_factor, n_steps)
-
-    # Placeholder for second input (not used for prediction)
-    X_placeholder = np.zeros_like(X_vectors)
-
+    # Generate range of points along the direction
+    steps = np.linspace(-range_factor, range_factor, n_steps)
     sensitivities = []
-    predictions = []
+    confidences = []
 
-    # Compute predictions and sensitivities along direction
-    for alpha in alphas:
-        # Perturb vectors along direction
-        X_perturbed = X_vectors + alpha * direction_vector
+    # Measure probe output at each point along the direction
+    for step in steps:
+        # Move representations along direction vector
+        perturbed_X = X_vectors + step * direction_vector
 
-        # Get predictions
-        preds, probs = ccs.predict(X_perturbed, X_placeholder)
-        predictions.append(preds)
+        # Get predictions using the probe
+        preds, confs = ccs.predict_from_vectors(perturbed_X)
 
-        # Compute sensitivity (approximation of Fisher information)
-        if alpha < alphas[-1]:
-            # Compute next step predictions for derivative
-            X_next = X_vectors + (alpha + alphas[1] - alphas[0]) * direction_vector
-            _, probs_next = ccs.predict(X_next, X_placeholder)
+        # Store average confidence to measure sensitivity
+        avg_conf = np.mean(confs)
+        confidences.append(avg_conf)
 
-            # Compute derivative of log-probability
-            derivative = (probs_next.cpu().numpy() - probs.cpu().numpy()) / (
-                alphas[1] - alphas[0]
-            )
-
-            # Sensitivity is square of derivative
-            sensitivity = np.mean(derivative**2)
+        # Calculate sensitivity (approximation of first derivative)
+        if len(sensitivities) > 0:
+            # Forward difference
+            sensitivity = abs(avg_conf - confidences[-2]) / (steps[1] - steps[0])
             sensitivities.append(sensitivity)
+
+    # Add a zero for the first point's sensitivity (no previous point to compare)
+    sensitivities = [0] + sensitivities
 
     # Find point of maximum sensitivity
     max_idx = np.argmax(sensitivities)
-    max_alpha = alphas[max_idx]
-
-    # Compute decision boundary (where predictions flip)
-    decision_boundaries = []
-    for i in range(len(predictions) - 1):
-        if (predictions[i] != predictions[i + 1]).any():
-            # Boundary is between these two points
-            boundary = (alphas[i] + alphas[i + 1]) / 2
-            decision_boundaries.append(boundary)
+    max_sensitivity_point = steps[max_idx]
+    max_sensitivity_value = sensitivities[max_idx]
 
     return {
-        "alphas": alphas,
+        "steps": steps.tolist(),
+        "confidences": confidences,
         "sensitivities": sensitivities,
-        "predictions": predictions,
-        "max_sensitivity_point": max_alpha,
-        "max_sensitivity_value": sensitivities[max_idx],
-        "decision_boundaries": decision_boundaries,
+        "max_sensitivity_point": float(max_sensitivity_point),
+        "max_sensitivity_value": float(max_sensitivity_value),
     }
 
 
@@ -491,6 +484,12 @@ def subspace_analysis(hate_vectors, safe_vectors, n_components=10):
     # Add numerical stability
     hate_vectors = np.clip(hate_vectors, -1e6, 1e6)
     safe_vectors = np.clip(safe_vectors, -1e6, 1e6)
+
+    # Reshape vectors to 2D if they are 3D
+    if len(hate_vectors.shape) == 3:
+        hate_vectors = hate_vectors.reshape(hate_vectors.shape[0], -1)
+    if len(safe_vectors.shape) == 3:
+        safe_vectors = safe_vectors.reshape(safe_vectors.shape[0], -1)
 
     # Combine data
     X_combined = np.vstack([hate_vectors, safe_vectors])
@@ -545,273 +544,349 @@ def subspace_analysis(hate_vectors, safe_vectors, n_components=10):
     }
 
 
-def visualize_decision_boundary(
-    ccs, hate_vectors, safe_vectors, steering_vector, log_base=None
-):
-    """
-    Visualize the decision boundary of the CCS probe in the steering vector direction.
-    """
-    import matplotlib.pyplot as plt
-    from sklearn.decomposition import PCA
+# def visualize_decision_boundary(
+#     ccs, hate_vectors, safe_vectors, steering_vector, log_base=None
+# ):
+#     """
+#     Visualize the decision boundary of the CCS probe in the steering vector direction.
+#     """
+#     import matplotlib.pyplot as plt
+#     from sklearn.decomposition import PCA
 
-    # Create figure and axes
-    fig, ax = plt.subplots(figsize=(12, 10))
+#     # Create figure and axes
+#     fig, ax = plt.subplots(figsize=(12, 10))
 
-    # Normalize steering vector
-    steering_norm = np.linalg.norm(steering_vector)
-    if steering_norm > 1e-10:
-        steering_vector = steering_vector / steering_norm
+#     # Normalize steering vector
+#     steering_norm = np.linalg.norm(steering_vector)
+#     if steering_norm > 1e-10:
+#         steering_vector = steering_vector / steering_norm
 
-    # Combine data
-    X_combined = np.vstack([hate_vectors, safe_vectors])
-    labels = np.concatenate([np.zeros(len(hate_vectors)), np.ones(len(safe_vectors))])
+#     # Ensure vectors are properly shaped (2D)
+#     if len(hate_vectors.shape) == 3:
+#         hate_vectors = hate_vectors.reshape(hate_vectors.shape[0], -1)
+#     if len(safe_vectors.shape) == 3:
+#         safe_vectors = safe_vectors.reshape(safe_vectors.shape[0], -1)
+#     if len(steering_vector.shape) > 1 and steering_vector.shape[0] == 1:
+#         steering_vector = steering_vector.flatten()
 
-    # Project data to 2D for visualization
-    # First component: steering vector direction
-    # Second component: PCA of residuals
-    projections = []
+#     # Combine data
+#     X_combined = np.vstack([hate_vectors, safe_vectors])
+#     labels = np.concatenate([np.zeros(len(hate_vectors)), np.ones(len(safe_vectors))])
 
-    # Project onto steering vector
-    projection1 = np.array([np.dot(x, steering_vector) for x in X_combined])
-    projections.append(projection1)
+#     # Project data to 2D for visualization
+#     # First component: steering vector direction
+#     # Second component: PCA of residuals
+#     projections = []
 
-    # Compute residuals
-    residuals = X_combined - np.outer(projection1, steering_vector)
+#     # Project onto steering vector
+#     projection1 = np.array([np.dot(x, steering_vector) for x in X_combined])
+#     projections.append(projection1)
 
-    # Find second direction (orthogonal to steering vector)
-    pca = PCA(n_components=1)
-    pca.fit(residuals)
-    second_direction = pca.components_[0]
+#     # Compute residuals
+#     residuals = X_combined - np.outer(projection1, steering_vector)
 
-    # Project onto second direction
-    projection2 = np.array([np.dot(x, second_direction) for x in X_combined])
-    projections.append(projection2)
+#     print(f"Residuals shape before reshape: {residuals.shape}")
 
-    # Create 2D projections
-    X_2d = np.column_stack(projections)
+#     # Ensure residuals are 2D (reshape if necessary)
+#     if len(residuals.shape) > 2:
+#         residuals = residuals.reshape(residuals.shape[0], -1)
 
-    # Create grid for decision boundary
-    x_min, x_max = X_2d[:, 0].min() - 1, X_2d[:, 0].max() + 1
-    y_min, y_max = X_2d[:, 1].min() - 1, X_2d[:, 1].max() + 1
+#     print(f"Residuals shape after reshape: {residuals.shape}")
 
-    xx, yy = np.meshgrid(np.linspace(x_min, x_max, 100), np.linspace(y_min, y_max, 100))
+#     # Find second direction (orthogonal to steering vector)
+#     pca = PCA(n_components=1)
+#     pca.fit(residuals)
+#     second_direction = pca.components_[0]
 
-    # Reconstruct grid points in original space
-    grid_points = np.array([xx.ravel(), yy.ravel()]).T
-    original_space = np.outer(grid_points[:, 0], steering_vector) + np.outer(
-        grid_points[:, 1], second_direction
-    )
+#     # Reshape second_direction if needed to match the original dimension
+#     if len(hate_vectors.shape) == 3:
+#         original_shape = hate_vectors.shape[1:]
+#         second_direction = second_direction.reshape(original_shape)
 
-    # Predict on grid points
-    X_placeholder = np.zeros_like(original_space)
-    grid_preds, _ = ccs.predict(original_space, X_placeholder)
-    grid_preds = grid_preds.reshape(xx.shape)
+#     # Project onto second direction
+#     projection2 = np.array(
+#         [np.dot(x.flatten(), second_direction.flatten()) for x in X_combined]
+#     )
+#     projections.append(projection2)
 
-    # Plot decision boundary
-    ax.contourf(xx, yy, grid_preds, alpha=0.3, cmap="RdBu")
+#     # Create 2D projections
+#     X_2d = np.column_stack(projections)
 
-    # Plot data points
-    colors = np.array(["#D7263D", "#1B98E0"])  # Red for hate, blue for safe
-    edge_color = "k"  # Black edge for contrast
+#     # Create grid for decision boundary
+#     x_min, x_max = X_2d[:, 0].min() - 1, X_2d[:, 0].max() + 1
+#     y_min, y_max = X_2d[:, 1].min() - 1, X_2d[:, 1].max() + 1
 
-    for label, color in zip([0, 1], colors):
-        idx = labels == label
-        ax.scatter(
-            X_2d[idx, 0],
-            X_2d[idx, 1],
-            c=color,
-            edgecolor=edge_color,
-            s=70,
-            alpha=0.85,
-            label="Hate" if label == 0 else "Safe",
-        )
+#     xx, yy = np.meshgrid(np.linspace(x_min, x_max, 100), np.linspace(y_min, y_max, 100))
 
-    # Add steering vector direction
-    ax.arrow(
-        0,
-        0,
-        1,
-        0,
-        color="black",
-        width=0.02,
-        head_width=0.1,
-        head_length=0.1,
-        length_includes_head=True,
-        label="Steering Direction",
-        zorder=20,
-    )
+#     # Reconstruct grid points in original space
+#     grid_points = np.array([xx.ravel(), yy.ravel()]).T
 
-    ax.set_xlabel("Steering Vector Direction")
-    ax.set_ylabel("Orthogonal Direction")
-    ax.set_title("CCS Probe Decision Boundary in Steering Space")
-    ax.legend(loc="upper right", fontsize=12)
-    ax.grid(True)
+#     # Ensure steering_vector and second_direction are flattened for outer product
+#     steering_vector_flat = (
+#         steering_vector.flatten()
+#         if hasattr(steering_vector, "flatten")
+#         else steering_vector
+#     )
+#     second_direction_flat = (
+#         second_direction.flatten()
+#         if hasattr(second_direction, "flatten")
+#         else second_direction
+#     )
 
-    # Add descriptive text
-    text = """
-    Description: This plot shows the decision boundary of the CCS probe in the space defined by the steering vector and its orthogonal complement.
-    
-    Ideal Case:
-    - Clear separation between hate (red) and safe (blue) content
-    - Decision boundary should be roughly perpendicular to the steering direction
-    - Points should cluster into two distinct groups
-    
-    Interpretation:
-    - The steering vector direction (horizontal axis) shows how content changes when steering is applied
-    - The orthogonal direction (vertical axis) shows variations that preserve the steering effect
-    - The decision boundary (colored regions) shows where the probe switches between hate and safe predictions
-    - A clear boundary indicates the probe can reliably distinguish between content types
-    """
+#     original_space = np.outer(grid_points[:, 0], steering_vector_flat) + np.outer(
+#         grid_points[:, 1], second_direction_flat
+#     )
 
-    fig.text(
-        0.5,
-        0.01,
-        text,
-        ha="center",
-        va="bottom",
-        bbox=dict(facecolor="white", alpha=0.8, edgecolor="gray"),
-        wrap=True,
-    )
+#     # Predict on grid points
+#     X_placeholder = np.zeros_like(original_space)
+#     grid_preds, _ = ccs.predict_from_vectors(original_space)
+#     grid_preds = grid_preds.reshape(xx.shape)
 
-    # Adjust layout to make room for text
-    plt.tight_layout(rect=(0, 0.15, 1, 1))
+#     # Plot decision boundary
+#     ax.contourf(xx, yy, grid_preds, alpha=0.3, cmap="RdBu")
 
-    if log_base:
-        plt.savefig(f"{log_base}_decision_boundary.png", dpi=300, bbox_inches="tight")
+#     # Plot data points
+#     colors = np.array(["#D7263D", "#1B98E0"])  # Red for hate, blue for safe
+#     edge_color = "k"  # Black edge for contrast
 
-    return fig
+#     for label, color in zip([0, 1], colors):
+#         idx = labels == label
+#         ax.scatter(
+#             X_2d[idx, 0],
+#             X_2d[idx, 1],
+#             c=color,
+#             edgecolor=edge_color,
+#             s=70,
+#             alpha=0.85,
+#             label="Hate" if label == 0 else "Safe",
+#         )
+
+#     # Add steering vector direction
+#     ax.arrow(
+#         0,
+#         0,
+#         1,
+#         0,
+#         color="black",
+#         width=0.02,
+#         head_width=0.1,
+#         head_length=0.1,
+#         length_includes_head=True,
+#         label="Steering Direction",
+#         zorder=20,
+#     )
+
+#     ax.set_xlabel("Steering Vector Direction")
+#     ax.set_ylabel("Orthogonal Direction")
+#     ax.set_title("CCS Probe Decision Boundary in Steering Space")
+#     ax.legend(loc="upper right", fontsize=12)
+#     ax.grid(True)
+
+#     # Add descriptive text
+#     text = """
+#     Description: This plot shows the decision boundary of the CCS probe in the space defined by the steering vector and its orthogonal complement.
+
+#     Ideal Case:
+#     - Clear separation between hate (red) and safe (blue) content
+#     - Decision boundary should be roughly perpendicular to the steering direction
+#     - Points should cluster into two distinct groups
+
+#     Interpretation:
+#     - The steering vector direction (horizontal axis) shows how content changes when steering is applied
+#     - The orthogonal direction (vertical axis) shows variations that preserve the steering effect
+#     - The decision boundary (colored regions) shows where the probe switches between hate and safe predictions
+#     - A clear boundary indicates the probe can reliably distinguish between content types
+#     """
+
+#     fig.text(
+#         0.5,
+#         0.01,
+#         text,
+#         ha="center",
+#         va="bottom",
+#         bbox=dict(facecolor="white", alpha=0.8, edgecolor="gray"),
+#         wrap=True,
+#     )
+
+#     # Adjust layout to make room for text
+#     plt.tight_layout(rect=(0, 0.15, 1, 1))
+
+#     if log_base:
+#         plt.savefig(f"{log_base}_decision_boundary.png", dpi=300, bbox_inches="tight")
+
+#     return fig
 
 
-def plot_all_decision_boundaries(layers_data, log_base=None):
-    """
-    Plot decision boundaries for all layers as subplots in a single figure.
-    layers_data: list of dicts with keys 'ccs', 'hate_vectors', 'safe_vectors', 'steering_vector', 'layer_idx'
-    """
-    import matplotlib.pyplot as plt
-    from sklearn.decomposition import PCA
+# def plot_all_decision_boundaries(layers_data, log_base=None):
+#     """
+#     Plot decision boundaries for all layers as subplots in a single figure.
+#     layers_data: list of dicts with keys 'ccs', 'hate_vectors', 'safe_vectors', 'steering_vector', 'layer_idx'
+#     """
+#     import matplotlib.pyplot as plt
+#     from sklearn.decomposition import PCA
 
-    n_layers = len(layers_data)
-    n_cols = 3
-    n_rows = (n_layers + n_cols - 1) // n_cols
-    fig, axes = plt.subplots(n_rows, n_cols, figsize=(7 * n_cols, 6 * n_rows))
-    axes = axes.flatten()
+#     n_layers = len(layers_data)
+#     n_cols = 3
+#     n_rows = (n_layers + n_cols - 1) // n_cols
+#     fig, axes = plt.subplots(n_rows, n_cols, figsize=(7 * n_cols, 6 * n_rows))
+#     axes = axes.flatten()
 
-    for i, layer in enumerate(layers_data):
-        ccs = layer["ccs"]
-        hate_vectors = layer["hate_vectors"]
-        safe_vectors = layer["safe_vectors"]
-        steering_vector = layer["steering_vector"]
-        layer_idx = layer.get("layer_idx", i)
-        ax = axes[i]
+#     for i, layer in enumerate(layers_data):
+#         ccs = layer["ccs"]
+#         hate_vectors = layer["hate_vectors"]
+#         safe_vectors = layer["safe_vectors"]
+#         steering_vector = layer["steering_vector"]
+#         layer_idx = layer.get("layer_idx", i)
+#         ax = axes[i]
 
-        # Normalize steering vector
-        steering_norm = np.linalg.norm(steering_vector)
-        if steering_norm > 1e-10:
-            steering_vector = steering_vector / steering_norm
+#         # Normalize steering vector
+#         steering_norm = np.linalg.norm(steering_vector)
+#         if steering_norm > 1e-10:
+#             steering_vector = steering_vector / steering_norm
 
-        # Combine data
-        X_combined = np.vstack([hate_vectors, safe_vectors])
-        labels = np.concatenate(
-            [np.zeros(len(hate_vectors)), np.ones(len(safe_vectors))]
-        )
+#         # Ensure vectors are properly shaped (2D)
+#         if len(hate_vectors.shape) == 3:
+#             hate_vectors = hate_vectors.reshape(hate_vectors.shape[0], -1)
+#         if len(safe_vectors.shape) == 3:
+#             safe_vectors = safe_vectors.reshape(safe_vectors.shape[0], -1)
+#         if len(steering_vector.shape) > 1 and steering_vector.shape[0] == 1:
+#             steering_vector = steering_vector.flatten()
 
-        # Project data to 2D for visualization
-        projection1 = np.array([np.dot(x, steering_vector) for x in X_combined])
-        residuals = X_combined - np.outer(projection1, steering_vector)
-        pca = PCA(n_components=1)
-        pca.fit(residuals)
-        second_direction = pca.components_[0]
-        projection2 = np.array([np.dot(x, second_direction) for x in X_combined])
-        X_2d = np.column_stack([projection1, projection2])
+#         # Combine data
+#         X_combined = np.vstack([hate_vectors, safe_vectors])
+#         labels = np.concatenate(
+#             [np.zeros(len(hate_vectors)), np.ones(len(safe_vectors))]
+#         )
 
-        # Create grid for decision boundary
-        x_min, x_max = X_2d[:, 0].min() - 1, X_2d[:, 0].max() + 1
-        y_min, y_max = X_2d[:, 1].min() - 1, X_2d[:, 1].max() + 1
-        xx, yy = np.meshgrid(
-            np.linspace(x_min, x_max, 100), np.linspace(y_min, y_max, 100)
-        )
-        grid_points = np.array([xx.ravel(), yy.ravel()]).T
-        original_space = np.outer(grid_points[:, 0], steering_vector) + np.outer(
-            grid_points[:, 1], second_direction
-        )
-        X_placeholder = np.zeros_like(original_space)
-        grid_preds, _ = ccs.predict(original_space, X_placeholder)
-        grid_preds = grid_preds.reshape(xx.shape)
+#         # Project data to 2D for visualization
+#         # Project onto steering vector
+#         projection1 = np.array([np.dot(x, steering_vector) for x in X_combined])
 
-        # Plot decision boundary
-        ax.contourf(xx, yy, grid_preds, alpha=0.3, cmap="RdBu")
-        colors = np.array(["#D7263D", "#1B98E0"])  # Red for hate, blue for safe
-        edge_color = "k"  # Black edge for contrast
+#         # Compute residuals
+#         residuals = X_combined - np.outer(projection1, steering_vector)
 
-        for label, color in zip([0, 1], colors):
-            idx = labels == label
-            ax.scatter(
-                X_2d[idx, 0],
-                X_2d[idx, 1],
-                c=color,
-                edgecolor=edge_color,
-                s=70,
-                alpha=0.85,
-                label="Hate" if label == 0 else "Safe",
-            )
-        ax.arrow(
-            0,
-            0,
-            1,
-            0,
-            color="black",
-            width=0.02,
-            head_width=0.1,
-            head_length=0.1,
-            length_includes_head=True,
-            label="Steering Direction",
-            zorder=20,
-        )
-        ax.set_xlabel("Steering Vector Direction")
-        ax.set_ylabel("Orthogonal Direction")
-        ax.set_title(f"Layer {layer_idx}")
-        ax.grid(True)
-        if i == 0:
-            ax.legend(loc="upper right", fontsize=12)
+#         # Ensure residuals are 2D (reshape if necessary)
+#         if len(residuals.shape) > 2:
+#             residuals = residuals.reshape(residuals.shape[0], -1)
 
-    # Hide unused subplots
-    for j in range(n_layers, len(axes)):
-        axes[j].axis("off")
+#         # Find second direction (orthogonal to steering vector) using PCA
+#         pca = PCA(n_components=1)
+#         pca.fit(residuals)
+#         second_direction = pca.components_[0]
 
-    # Add detailed description block
-    description = (
-        "This figure shows the decision boundaries of the CCS probe for each layer in the space defined by the steering vector (horizontal axis) and its orthogonal complement (vertical axis).\n\n"
-        "**How to interpret:**\n"
-        "- Each subplot corresponds to a different layer.\n"
-        "- The colored regions show the model's predicted class (hate or safe) in the 2D projection.\n"
-        "- The black arrow shows the direction of the steering vector.\n"
-        "- Points are colored by their true class.\n"
-        "- A clear, vertical decision boundary (perpendicular to the steering vector) indicates the probe can reliably distinguish between content types along the steering direction.\n\n"
-        "**Ideal case:**\n"
-        "- Hate and safe points form two distinct clusters separated by a sharp boundary.\n"
-        "- The boundary is perpendicular to the steering direction.\n"
-        "- The probe's predictions match the true classes.\n\n"
-        "**Non-ideal case:**\n"
-        "- Overlapping clusters or a fuzzy boundary indicate the probe struggles to distinguish between classes.\n"
-        "- A boundary not aligned with the steering direction suggests the steering vector is not the most discriminative direction.\n"
-        "\n"
-        "**Axes:**\n"
-        "- Horizontal: projection onto the steering vector (how much a point moves when steered).\n"
-        "- Vertical: projection onto the main orthogonal direction (other variations).\n"
-    )
-    fig.text(
-        0.5,
-        0.01,
-        description,
-        ha="center",
-        va="bottom",
-        wrap=True,
-        fontsize=12,
-        bbox=dict(facecolor="white", alpha=0.8, edgecolor="gray"),
-    )
-    plt.tight_layout(rect=(0, 0.08, 1, 1))
-    if log_base:
-        plt.savefig(
-            f"{log_base}_all_decision_boundaries.png", dpi=300, bbox_inches="tight"
-        )
-    return fig
+#         # Reshape second_direction if needed to match the original dimension
+#         if len(hate_vectors.shape) == 3:
+#             original_shape = hate_vectors.shape[1:]
+#             second_direction = second_direction.reshape(original_shape)
+
+#         # Project onto second direction (ensure vectors are flattened for dot product)
+#         projection2 = np.array(
+#             [np.dot(x.flatten(), second_direction.flatten()) for x in X_combined]
+#         )
+#         X_2d = np.column_stack([projection1, projection2])
+
+#         # Create grid for decision boundary
+#         x_min, x_max = X_2d[:, 0].min() - 1, X_2d[:, 0].max() + 1
+#         y_min, y_max = X_2d[:, 1].min() - 1, X_2d[:, 1].max() + 1
+#         xx, yy = np.meshgrid(
+#             np.linspace(x_min, x_max, 100), np.linspace(y_min, y_max, 100)
+#         )
+#         grid_points = np.array([xx.ravel(), yy.ravel()]).T
+
+#         # Ensure steering_vector and second_direction are flattened for outer product
+#         steering_vector_flat = (
+#             steering_vector.flatten()
+#             if hasattr(steering_vector, "flatten")
+#             else steering_vector
+#         )
+#         second_direction_flat = (
+#             second_direction.flatten()
+#             if hasattr(second_direction, "flatten")
+#             else second_direction
+#         )
+
+#         original_space = np.outer(grid_points[:, 0], steering_vector_flat) + np.outer(
+#             grid_points[:, 1], second_direction_flat
+#         )
+
+#         # Predict on grid points using predict_from_vectors
+#         grid_preds, _ = ccs.predict_from_vectors(original_space)
+#         grid_preds = grid_preds.reshape(xx.shape)
+
+#         # Plot decision boundary
+#         ax.contourf(xx, yy, grid_preds, alpha=0.3, cmap="RdBu")
+#         colors = np.array(["#D7263D", "#1B98E0"])  # Red for hate, blue for safe
+#         edge_color = "k"  # Black edge for contrast
+
+#         for label, color in zip([0, 1], colors):
+#             idx = labels == label
+#             ax.scatter(
+#                 X_2d[idx, 0],
+#                 X_2d[idx, 1],
+#                 c=color,
+#                 edgecolor=edge_color,
+#                 s=70,
+#                 alpha=0.85,
+#                 label="Hate" if label == 0 else "Safe",
+#             )
+#         ax.arrow(
+#             0,
+#             0,
+#             1,
+#             0,
+#             color="black",
+#             width=0.02,
+#             head_width=0.1,
+#             head_length=0.1,
+#             length_includes_head=True,
+#             label="Steering Direction",
+#             zorder=20,
+#         )
+#         ax.set_xlabel("Steering Vector Direction")
+#         ax.set_ylabel("Orthogonal Direction")
+#         ax.set_title(f"Layer {layer_idx}")
+#         ax.grid(True)
+#         if i == 0:
+#             ax.legend(loc="upper right", fontsize=12)
+
+#     # Hide unused subplots
+#     for j in range(n_layers, len(axes)):
+#         axes[j].axis("off")
+
+#     # Add detailed description block
+#     description = (
+#         "This figure shows the decision boundaries of the CCS probe for each layer in the space defined by the steering vector (horizontal axis) and its orthogonal complement (vertical axis).\n\n"
+#         "**How to interpret:**\n"
+#         "- Each subplot corresponds to a different layer.\n"
+#         "- The colored regions show the model's predicted class (hate or safe) in the 2D projection.\n"
+#         "- The black arrow shows the direction of the steering vector.\n"
+#         "- Points are colored by their true class.\n"
+#         "- A clear, vertical decision boundary (perpendicular to the steering vector) indicates the probe can reliably distinguish between content types along the steering direction.\n\n"
+#         "**Ideal case:**\n"
+#         "- Hate and safe points form two distinct clusters separated by a sharp boundary.\n"
+#         "- The boundary is perpendicular to the steering direction.\n"
+#         "- The probe's predictions match the true classes.\n\n"
+#         "**Non-ideal case:**\n"
+#         "- Overlapping clusters or a fuzzy boundary indicate the probe struggles to distinguish between classes.\n"
+#         "- A boundary not aligned with the steering direction suggests the steering vector is not the most discriminative direction.\n"
+#         "\n"
+#         "**Axes:**\n"
+#         "- Horizontal: projection onto the steering vector (how much a point moves when steered).\n"
+#         "- Vertical: projection onto the main orthogonal direction (other variations).\n"
+#     )
+#     fig.text(
+#         0.5,
+#         0.01,
+#         description,
+#         ha="center",
+#         va="bottom",
+#         wrap=True,
+#         fontsize=12,
+#         bbox=dict(facecolor="white", alpha=0.8, edgecolor="gray"),
+#     )
+#     plt.tight_layout(rect=(0, 0.08, 1, 1))
+#     if log_base:
+#         plt.savefig(
+#             f"{log_base}_all_decision_boundaries.png", dpi=300, bbox_inches="tight"
+#         )
+#     return fig

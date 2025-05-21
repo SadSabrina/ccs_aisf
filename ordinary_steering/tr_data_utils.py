@@ -196,9 +196,9 @@ def extract_representation(
     # Log input text and strategy only for the first 3 calls
     if _log_counter.should_log():
         logging.info(
-            f"extract_representation: type(text)={type(text)}, text={str(text)[:100]}"
+            f"extract_representation: type(text)={type(text)}, text={str(text)}"
         )
-    logging.debug(f"Extracting representation for text: {text[:100]}...")
+    logging.debug(f"Extracting representation for text: {text}...")
     logging.debug(f"Using strategy: {strategy}, layer: {layer_index}")
 
     # Tokenize input
@@ -265,15 +265,21 @@ class EnhancedHateSafeDataset(Dataset):
         # Store length of dataset (each sample will provide one statement of each type)
         self.n_per_type = len(hate_yes_data)
 
-        # Traditional hate/safe split for compatibility with existing code
-        self.hate_data = np.concatenate([hate_yes_data, hate_no_data])
-        self.safe_data = np.concatenate([safe_yes_data, safe_no_data])
+        # Group hate and safe data following the logical combinations:
+        # - hate_data = hate_yes + safe_no (considered harmful content)
+        # - safe_data = safe_yes + hate_no (considered safe content)
+        self.hate_data_combined = np.concatenate(
+            [hate_yes_data, safe_no_data]
+        )  # Harmful content
+        self.safe_data_combined = np.concatenate(
+            [safe_yes_data, hate_no_data]
+        )  # Safe content
 
         # Create labels: 0 for hate, 1 for safe
         self.labels = np.concatenate(
             [
-                np.zeros(len(self.hate_data)),  # hate
-                np.ones(len(self.safe_data)),  # safe
+                np.zeros(len(self.hate_data_combined)),  # hate (hate_yes + safe_no)
+                np.ones(len(self.safe_data_combined)),  # safe (safe_yes + hate_no)
             ]
         )
 
@@ -284,34 +290,37 @@ class EnhancedHateSafeDataset(Dataset):
         self.data_types = []
         for i in range(len(hate_yes_data)):
             self.data_types.append("hate_yes")
-        for i in range(len(hate_no_data)):
-            self.data_types.append("hate_no")
-        for i in range(len(safe_yes_data)):
-            self.data_types.append("safe_yes")
         for i in range(len(safe_no_data)):
             self.data_types.append("safe_no")
+        for i in range(len(safe_yes_data)):
+            self.data_types.append("safe_yes")
+        for i in range(len(hate_no_data)):
+            self.data_types.append("hate_no")
 
     def __len__(self):
         return self.n_samples
 
     def __getitem__(self, idx):
-        # For compatibility with existing code, maintain the same structure
-        # but add data_type information
-        if idx < len(self.hate_data):
-            # This is a hate sample (could be hate_yes or hate_no)
+        # Return data with the proper hate/safe combinations
+        if idx < len(self.hate_data_combined):
+            # This is a harmful sample (either hate_yes or safe_no)
             return {
-                "hate_data": self.hate_data[idx],
-                "safe_data": self.hate_data[idx],  # Same as in original code
-                "labels": self.labels[idx],
+                "hate_data": self.hate_data_combined[idx],
+                "safe_data": self.hate_data_combined[
+                    idx
+                ],  # Same for training compatibility
+                "labels": self.labels[idx],  # 0 for hate
                 "data_type": self.data_types[idx],
             }
         else:
-            # This is a safe sample (could be safe_yes or safe_no)
-            safe_idx = idx - len(self.hate_data)
+            # This is a safe sample (either safe_yes or hate_no)
+            safe_idx = idx - len(self.hate_data_combined)
             return {
-                "hate_data": self.safe_data[safe_idx],  # Same as in original code
-                "safe_data": self.safe_data[safe_idx],
-                "labels": self.labels[idx],
+                "hate_data": self.safe_data_combined[safe_idx],  # Using safe data
+                "safe_data": self.safe_data_combined[
+                    safe_idx
+                ],  # Same for training compatibility
+                "labels": self.labels[idx],  # 1 for safe
                 "data_type": self.data_types[idx],
             }
 

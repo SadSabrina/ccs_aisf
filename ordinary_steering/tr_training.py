@@ -11,11 +11,29 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from ccs_metrics import (
-    evaluate_ccs_performance,
+    agreement_score,
+    compute_class_separability,
+    contradiction_index,
+    fisher_information_analysis,
+    ideal_representation_distance,
+    representation_stability,
+    subspace_analysis,
 )
+from logger import print_results_summary
+from ordinary_steering_metrics import plot_coefficient_sweep_lines_comparison
 from sklearn.metrics import accuracy_score, roc_auc_score, silhouette_score
 from tqdm import tqdm
 from tr_data_utils import extract_representation
+from tr_plotting import (
+    plot_all_decision_boundaries,
+    plot_all_layer_vectors,
+    plot_all_strategies_all_steering_vectors,
+    plot_individual_steering_vectors,
+    plot_performance_across_layers,
+    plot_vectors_all_strategies,
+    visualize_decision_boundary,
+    visualize_detailed_decision_boundary,
+)
 
 matplotlib.use("Agg")
 
@@ -55,6 +73,9 @@ class MLPProbe(nn.Module):
     def forward(self, x):
         h = F.relu(self.linear1(x))
         o = self.linear2(h)
+        # Ensure output has shape [batch_size, 1]
+        if len(o.shape) == 1:
+            o = o.unsqueeze(1)
         return torch.sigmoid(o)
 
 
@@ -163,21 +184,63 @@ class CCS:
                 safe_reps.append(rep)
             safe_reps = torch.tensor(np.stack(safe_reps), device=self.device)
 
-            # Normalize representations
-            hate_reps = self.normalize(hate_reps)
-            safe_reps = self.normalize(safe_reps)
+            # Apply variance normalization if configured
+            if self.var_normalize:
+                hate_reps = self.normalize(hate_reps)
+                safe_reps = self.normalize(safe_reps)
 
-            # Get predictions using probe
-            p0 = self.best_probe(hate_reps)
-            p1 = self.best_probe(safe_reps)
+            # Predict probabilities
+            hate_logits = self.probe(hate_reps.view(hate_reps.size(0), -1))
+            safe_logits = self.probe(safe_reps.view(safe_reps.size(0), -1))
 
-            # Compute average confidence
-            avg_confidence = 0.5 * (p0 + (1 - p1))
+            # Get probabilities and predictions
+            hate_probs = F.softmax(hate_logits, dim=1)
+            safe_probs = F.softmax(safe_logits, dim=1)
 
-            # Get predictions - binary classification
-            predictions = (avg_confidence.cpu().numpy() > 0.5).astype(int)[:, 0]
+            # Stack all predictions
+            all_probs = torch.cat([hate_probs, safe_probs], dim=0)
+            confidence = torch.max(all_probs, dim=1)[0]
+            preds = torch.argmax(all_probs, dim=1)
 
-            return predictions, avg_confidence.cpu().numpy()[:, 0]
+            return preds.cpu().numpy(), confidence.cpu().numpy()
+
+    def predict_from_vectors(self, vector_data):
+        """Predict directly from pre-computed vector representations.
+
+        Args:
+            vector_data: numpy array of shape (batch_size, *) containing vector representations
+                        Will be reshaped to (batch_size, -1) for the model
+
+        Returns:
+            Tuple of (predictions, confidences)
+        """
+        with torch.no_grad():
+            # Convert numpy array to tensor if necessary
+            if not isinstance(vector_data, torch.Tensor):
+                vector_data = torch.tensor(
+                    vector_data, device=self.device, dtype=torch.float32
+                )
+            else:
+                # Make sure tensor has the right dtype
+                vector_data = vector_data.to(dtype=torch.float32)
+
+            # Apply variance normalization if configured
+            if self.var_normalize:
+                vector_data = self.normalize(vector_data)
+
+            # Flatten to 2D if needed
+            if len(vector_data.shape) > 2:
+                vector_data = vector_data.view(vector_data.size(0), -1)
+
+            # Get logits and probabilities
+            logits = self.probe(vector_data)
+            probs = F.softmax(logits, dim=1)
+
+            # Get predictions and confidence
+            confidence = torch.max(probs, dim=1)[0]
+            preds = torch.argmax(probs, dim=1)
+
+            return preds.cpu().numpy(), confidence.cpu().numpy()
 
     def get_acc(self, X_hate_test, X_safe_test, y_test):
         """Get accuracy for test data."""
@@ -496,10 +559,26 @@ class CCS:
         predictions = []
         probabilities = []
 
+        # Make sure steering_vector has the right shape for broadcasting
+        if len(steering_vector.shape) == 1:
+            # Convert 1D vector to match representation shape (add batch and possibly token dims)
+            steering_vector = steering_vector.reshape(1, -1)
+            if len(steering_vector.shape) == 2 and steering_vector.shape[0] == 1:
+                # This is already correctly shaped for 2D case (batch, hidden_dim)
+                pass
+            else:
+                # Reshape for 3D case (batch, token, hidden_dim)
+                steering_vector = steering_vector.reshape(1, 1, -1)
+
         with torch.no_grad():
             for batch in test_dataloader:
-                hate_data = batch["hate_data"]
-                safe_data = batch["safe_data"]
+                hate_data = batch[
+                    "hate_data"
+                ]  # This contains the harmful content (hate_yes or safe_no)
+                safe_data = batch[
+                    "safe_data"
+                ]  # This contains the safe content (safe_yes or hate_no)
+                data_types = batch.get("data_type", None)
 
                 # Get representations
                 hate_reps = []
@@ -533,8 +612,18 @@ class CCS:
                 hate_reps = self.normalize(hate_reps)
                 safe_reps = self.normalize(safe_reps)
 
-                # Apply steering only to hate representations
+                # Apply steering only to harmful representations (hate_yes and safe_no)
                 steering_tensor = torch.tensor(steering_vector, device=self.device)
+
+                # Ensure the steering tensor has the right shape for broadcasting to hate_reps
+                if steering_tensor.shape != hate_reps.shape and len(
+                    steering_tensor.shape
+                ) < len(hate_reps.shape):
+                    # If steering tensor has fewer dimensions, expand it to match hate_reps
+                    for _ in range(len(hate_reps.shape) - len(steering_tensor.shape)):
+                        steering_tensor = steering_tensor.unsqueeze(0)
+                    # Expand to batch dimension
+                    steering_tensor = steering_tensor.expand_as(hate_reps)
 
                 print(
                     f"steering_tensor shape: {steering_tensor.shape}, hate_reps shape: {hate_reps.shape}, safe_reps shape: {safe_reps.shape}"
@@ -601,7 +690,7 @@ def vectorize_df(
     """Converts text to embedding matrices"""
     n_show = min(3, len(df_text))
     logging.info(
-        f"vectorize_df: first {n_show} texts: {[str(t)[:100] for t in df_text[:n_show]]}"
+        f"vectorize_df: first {n_show} texts: {[str(t) for t in df_text[:n_show]]}"
     )
     embeddings = []
     for text in tqdm(
@@ -690,60 +779,80 @@ def train_ccs_with_steering(
     early_stopping_threshold=0.001,
     steering_coefficients=None,
 ):
-    """Train CCS with steering."""
-    # Setup logging
-    logger = setup_logging(run_dir)
-    logger.info(
-        f"Starting CCS training with steering. Model: {model.config.model_type}"
-    )
-    logger.info(
-        f"Number of layers: {n_layers}, Batch size: {batch_size}, Learning rate: {learning_rate}"
-    )
+    """Train CCS probes for each layer of the model and evaluate them with steering.
 
-    # Check if we have the enhanced dataset
-    is_enhanced_dataset = hasattr(train_dataloader.dataset, "get_by_type")
+    ### DETAILED PROCESS EXPLANATION ###
 
-    if is_enhanced_dataset:
-        logger.info("Using enhanced dataset with 4 statement types")
-        # Log examples of each type of statement
-        logger.info("\nExample statements from each category:")
-        logger.info(f"Hate Yes: {train_dataloader.dataset.get_by_type('hate_yes')[0]}")
-        logger.info(f"Hate No: {train_dataloader.dataset.get_by_type('hate_no')[0]}")
-        logger.info(f"Safe Yes: {train_dataloader.dataset.get_by_type('safe_yes')[0]}")
-        logger.info(f"Safe No: {train_dataloader.dataset.get_by_type('safe_no')[0]}")
-    else:
-        # Even if we don't have an enhanced dataset, we'll create one by splitting the data
-        logger.info(
-            "Standard dataset detected - will manually enhance it by splitting data"
-        )
-        # We'll manually enhance the dataset later by splitting hate/safe based on content patterns
+    This function performs the following steps for each layer in the model:
 
-    # Log sample batch from train dataloader
-    sample_batch = next(iter(train_dataloader))
-    logger.info("\nSample training batch:")
-    logger.info(f"Batch keys: {sample_batch.keys()}")
-    logger.info(f"Sample hate statement: {sample_batch['hate_data'][0]}")
-    logger.info(f"Sample safe statement: {sample_batch['safe_data'][0]}")
-    logger.info(f"Sample label: {sample_batch['labels'][0]}")
-    if "data_type" in sample_batch:
-        logger.info(f"Sample data type: {sample_batch['data_type'][0]}")
+    1. Training Phase:
+       - Initialize a CCS probe for the current layer
+       - Train the probe using train_dataloader and validate with val_dataloader
+       - Apply early stopping based on validation loss
 
-    # Log sample batch from test dataloader
-    sample_test_batch = next(iter(test_dataloader))
-    logger.info("\nSample test batch:")
-    logger.info(f"Sample test hate statement: {sample_test_batch['hate_data'][0]}")
-    logger.info(f"Sample test safe statement: {sample_test_batch['safe_data'][0]}")
-    logger.info(f"Sample test label: {sample_test_batch['labels'][0]}")
-    if "data_type" in sample_test_batch:
-        logger.info(f"Sample test data type: {sample_test_batch['data_type'][0]}")
+    2. Metrics Calculation (for each layer and steering coefficient):
+       - Base metrics: accuracy, AUC, silhouette score (cluster separation)
+       - Steering metrics: similarity_change, path_length, semantic_consistency
+       - Agreement metrics: agreement_score, contradiction_index
+       - Stability metrics: representation_stability
+       - Classification metrics: precision, recall, F1
 
-    # Initialize results dictionary
-    results = {}
+    3. Visualization/Plotting (generated throughout and at the end):
+       - Individual layer visualizations:
+         * Decision boundaries for each layer
+         * Vector representations showing hate/safe clusters
+       - Cross-layer visualizations:
+         * Performance metrics across all layers
+         * Layer vector comparisons
+         * Decision boundary comparisons
+       - Steering coefficient comparisons:
+         * Line plots showing metrics vs. coefficient values
+         * Effect of different steering strategies
 
-    # Train CCS for each layer
+    4. Results Collection:
+       - Store all metrics and visualizations
+       - Generate comprehensive summary using print_results_summary
+       - Save detailed JSON data and summary text
+
+    The function makes extensive use of the following metrics and plotting functions:
+    - Metrics: from ccs_metrics.py (evaluate_ccs_performance, compute_class_separability, etc.)
+    - Plotting: from tr_plotting.py (plot_performance_across_layers, plot_all_layer_vectors, etc.)
+    - Summary: from logger.py (print_results_summary)
+
+    Args:
+        model: The language model to use for extracting representations
+        tokenizer: The tokenizer to use for the model
+        train_dataloader: DataLoader for training data
+        val_dataloader: DataLoader for validation data
+        test_dataloader: DataLoader for test data
+        run_dir: Directory to save results
+        n_layers: Number of layers to train probes for
+        n_epochs: Number of epochs to train for
+        learning_rate: Learning rate for training
+        batch_size: Batch size for training
+        device: Device to use for training
+        save_every: Save checkpoint every save_every epochs
+        log_every: Log metrics every log_every epochs
+        early_stopping_patience: Patience for early stopping
+        early_stopping_threshold: Threshold for early stopping
+        steering_coefficients: List of steering coefficients to evaluate
+    """
+    plot_dir = os.path.join(run_dir, "plots")
+    os.makedirs(plot_dir, exist_ok=True)
+
+    if steering_coefficients is None:
+        steering_coefficients = [0.5, 1.0, 2.0, 5.0]
+
+    results = []  # Store results as a list
+    all_layer_data = []  # Store data for each layer for later visualization
+    all_strategy_data = {}  # Store data for different embedding strategies
+    all_steering_vectors = {}  # Store steering vectors for different strategies
+
+    # Train a CCS probe for each layer
     for layer_idx in range(n_layers):
-        logger.info(f"\nTraining CCS for layer {layer_idx}")
+        print(f"\nTraining CCS for layer {layer_idx}")
 
+        ############### TRAINING ###############
         # Initialize CCS
         ccs = CCS(
             model=model,
@@ -752,8 +861,8 @@ def train_ccs_with_steering(
             device=device,
         )
 
-        # Train CCS
-        ccs.train(
+        # Train the probe
+        training_result = ccs.train(
             train_dataloader=train_dataloader,
             val_dataloader=val_dataloader,
             n_epochs=n_epochs,
@@ -765,1708 +874,430 @@ def train_ccs_with_steering(
             early_stopping_threshold=early_stopping_threshold,
         )
 
-        # If we have the enhanced dataset, get all 4 types of statements
-        if is_enhanced_dataset:
-            logger.info(f"Extracting statements of all 4 types for layer {layer_idx}")
-            hate_yes_texts = train_dataloader.dataset.get_by_type("hate_yes")
-            hate_no_texts = train_dataloader.dataset.get_by_type("hate_no")
-            safe_yes_texts = train_dataloader.dataset.get_by_type("safe_yes")
-            safe_no_texts = train_dataloader.dataset.get_by_type("safe_no")
+        ############### DATA PREPARATION ###############
+        # Get original representations for the layer
+        hate_yes_texts = train_dataloader.dataset.get_by_type("hate_yes")
+        safe_no_texts = train_dataloader.dataset.get_by_type("safe_no")
+        safe_yes_texts = train_dataloader.dataset.get_by_type("safe_yes")
+        hate_no_texts = train_dataloader.dataset.get_by_type("hate_no")
 
-            # Log count of each type of statement
-            logger.info(f"Number of hate_yes statements: {len(hate_yes_texts)}")
-            logger.info(f"Number of hate_no statements: {len(hate_no_texts)}")
-            logger.info(f"Number of safe_yes statements: {len(safe_yes_texts)}")
-            logger.info(f"Number of safe_no statements: {len(safe_no_texts)}")
-        else:
-            # If not enhanced, use the default hate/safe split
-            logger.info(f"Using standard hate/safe split for layer {layer_idx}")
-            hate_texts = [
-                text for batch in train_dataloader for text in batch["hate_data"]
-            ]
-            safe_texts = [
-                text for batch in train_dataloader for text in batch["safe_data"]
-            ]
-
-        # Strategy names
-        strategies = ["last-token", "first-token", "mean"]
-
-        # Dictionary to store representations and vectors for each strategy
-        representations = {}
-        mean_vectors = {}
-        steering_vectors = {}
-
-        # Generate representations for all three strategies
-        for strategy in strategies:
-            logger.info(
-                f"Generating representations using {strategy} strategy for layer {layer_idx}"
-            )
-
-            if is_enhanced_dataset:
-                # Get representations for all 4 types separately, maintain their identity
-                hate_yes_representation = vectorize_df(
-                    df_text=hate_yes_texts,
-                    model=model,
-                    tokenizer=tokenizer,
-                    layer_index=layer_idx,
-                    strategy=strategy,
-                    device=device,
-                    name_source_data="hate_yes",
-                )
-
-                hate_no_representation = vectorize_df(
-                    df_text=hate_no_texts,
-                    model=model,
-                    tokenizer=tokenizer,
-                    layer_index=layer_idx,
-                    strategy=strategy,
-                    device=device,
-                    name_source_data="hate_no",
-                )
-
-                safe_yes_representation = vectorize_df(
-                    df_text=safe_yes_texts,
-                    model=model,
-                    tokenizer=tokenizer,
-                    layer_index=layer_idx,
-                    strategy=strategy,
-                    device=device,
-                    name_source_data="safe_yes",
-                )
-
-                safe_no_representation = vectorize_df(
-                    df_text=safe_no_texts,
-                    model=model,
-                    tokenizer=tokenizer,
-                    layer_index=layer_idx,
-                    strategy=strategy,
-                    device=device,
-                    name_source_data="safe_no",
-                )
-
-                # For backward compatibility, also create combined representations
-                # But use them only for calculating the main steering vector
-                hate_representation = np.vstack(
-                    [hate_yes_representation, hate_no_representation]
-                )
-                safe_representation = np.vstack(
-                    [safe_yes_representation, safe_no_representation]
-                )
-
-                # Create type arrays - these will help identify which point belongs to which category
-                hate_types = np.array(
-                    ["hate_yes"] * len(hate_yes_representation)
-                    + ["hate_no"] * len(hate_no_representation)
-                )
-                safe_types = np.array(
-                    ["safe_yes"] * len(safe_yes_representation)
-                    + ["safe_no"] * len(safe_no_representation)
-                )
-            else:
-                # We'll manually split the hate/safe data into yes/no categories
-                # Get hate and safe representations
-                hate_representation = vectorize_df(
-                    df_text=hate_texts,
-                    model=model,
-                    tokenizer=tokenizer,
-                    layer_index=layer_idx,
-                    strategy=strategy,
-                    device=device,
-                    name_source_data="hate",
-                )
-                safe_representation = vectorize_df(
-                    df_text=safe_texts,
-                    model=model,
-                    tokenizer=tokenizer,
-                    layer_index=layer_idx,
-                    strategy=strategy,
-                    device=device,
-                    name_source_data="safe",
-                )
-
-                # For standard datasets, we'll split each category (hate/safe) into two
-                # equal parts to simulate hate_yes/hate_no and safe_yes/safe_no
-                half_hate = len(hate_representation) // 2
-                half_safe = len(safe_representation) // 2
-
-                # Split each category
-                hate_yes_representation = hate_representation[:half_hate]
-                hate_no_representation = hate_representation[half_hate:]
-                safe_yes_representation = safe_representation[:half_safe]
-                safe_no_representation = safe_representation[half_safe:]
-
-                # Create type arrays
-                hate_types = np.array(
-                    ["hate_yes"] * len(hate_yes_representation)
-                    + ["hate_no"] * len(hate_no_representation)
-                )
-                safe_types = np.array(
-                    ["safe_yes"] * len(safe_yes_representation)
-                    + ["safe_no"] * len(safe_no_representation)
-                )
-
-                logger.info("Manually split standard dataset into 4 categories:")
-                logger.info(f"  - hate_yes: {len(hate_yes_representation)} samples")
-                logger.info(f"  - hate_no: {len(hate_no_representation)} samples")
-                logger.info(f"  - safe_yes: {len(safe_yes_representation)} samples")
-                logger.info(f"  - safe_no: {len(safe_no_representation)} samples")
-
-            # Check and reshape representations if needed
-            print(
-                f"Original {strategy} hate_representation shape: {hate_representation.shape}"
-            )
-            print(
-                f"Original {strategy} safe_representation shape: {safe_representation.shape}"
-            )
-
-            # Store representations
-            representations[strategy] = {
-                "hate": hate_representation,
-                "safe": safe_representation,
-                "hate_types": hate_types,
-                "safe_types": safe_types,
-            }
-
-            # Add a small amount of jitter to the steering vector to make it more visible
-            # This is just for visualization purposes
-            if strategy == "last-token":
-                # Last token is our primary strategy, so keep it as is
-                pass
-            elif strategy == "first-token":
-                # Add a slight boost to make differences more visible
-                hate_representation = hate_representation * 1.2
-                safe_representation = safe_representation * 1.2
-            elif strategy == "mean":
-                # Add a different boost to make differences more visible
-                hate_representation = hate_representation * 1.5
-                safe_representation = safe_representation * 1.5
-
-            # Compute mean vectors for visualization
-            if len(hate_representation.shape) == 3:
-                hate_representation_2d = hate_representation.reshape(
-                    hate_representation.shape[0], -1
-                )
-                safe_representation_2d = safe_representation.reshape(
-                    safe_representation.shape[0], -1
-                )
-            else:
-                hate_representation_2d = hate_representation
-                safe_representation_2d = safe_representation
-
-            hate_mean_vector = np.mean(hate_representation_2d, axis=0)
-            safe_mean_vector = np.mean(safe_representation_2d, axis=0)
-
-            # Store mean vectors
-            mean_vectors[strategy] = {
-                "hate": hate_mean_vector,
-                "safe": safe_mean_vector,
-            }
-
-            # Calculate multiple specialized steering vectors between different types
-            steering_vector_hate_yes_to_safe_yes = compute_steering_vector(
-                hate_yes_representation, safe_yes_representation
-            )
-            steering_vector_safe_no_to_hate_no = compute_steering_vector(
-                safe_no_representation, hate_no_representation
-            )
-            steering_vector_hate_yes_to_hate_no = compute_steering_vector(
-                hate_yes_representation, hate_no_representation
-            )
-            steering_vector_safe_no_to_safe_yes = compute_steering_vector(
-                safe_no_representation, safe_yes_representation
-            )
-
-            # Calculate combined source/target vectors
-            combined_source = np.vstack(
-                [hate_yes_representation, safe_no_representation]
-            )
-            combined_target = np.vstack(
-                [safe_yes_representation, hate_no_representation]
-            )
-
-            # Calculate mean of combined vectors
-            combined_source_mean = np.mean(
-                combined_source.reshape(combined_source.shape[0], -1), axis=0
-            )
-            combined_target_mean = np.mean(
-                combined_target.reshape(combined_target.shape[0], -1), axis=0
-            )
-
-            # Compute steering vector for combined categories
-            steering_vector_combined = combined_target_mean - combined_source_mean
-
-            # Use the main steering vector (hate_yes → safe_yes) as our primary one
-            main_steering_vector = steering_vector_hate_yes_to_safe_yes
-
-            # Store all steering vectors
-            all_steering_vectors = {
-                "hate_yes_to_safe_yes": {
-                    "vector": steering_vector_hate_yes_to_safe_yes,
-                    "color": "#00CC00",  # Bright green
-                    "label": "Hate Yes → Safe Yes",
-                },
-                "safe_no_to_hate_no": {
-                    "vector": steering_vector_safe_no_to_hate_no,
-                    "color": "#9900FF",  # Purple
-                    "label": "Safe No → Hate No",
-                },
-                "hate_yes_to_hate_no": {
-                    "vector": steering_vector_hate_yes_to_hate_no,
-                    "color": "#FF9900",  # Orange
-                    "label": "Hate Yes → Hate No",
-                },
-                "safe_no_to_safe_yes": {
-                    "vector": steering_vector_safe_no_to_safe_yes,
-                    "color": "#00FFCC",  # Teal
-                    "label": "Safe No → Safe Yes",
-                },
-                "combined": {
-                    "vector": steering_vector_combined,
-                    "color": "#FF00FF",  # Magenta
-                    "label": "(Hate Yes + Safe No) → (Safe Yes + Hate No)",
-                },
-            }
-
-            # Store all steering vectors in the main steering_vectors dictionary
-            steering_vectors[strategy] = main_steering_vector
-            for name, data in all_steering_vectors.items():
-                steering_vectors[f"{strategy}_{name}"] = data["vector"]
-                # Also store without strategy prefix for direct access
-                steering_vectors[name] = data["vector"]
-
-            # Store individual category representations
-            representations[strategy] = {
-                "hate_yes": hate_yes_representation,
-                "hate_no": hate_no_representation,
-                "safe_yes": safe_yes_representation,
-                "safe_no": safe_no_representation,
-                "hate": hate_representation,
-                "safe": safe_representation,
-                "hate_types": hate_types,
-                "safe_types": safe_types,
-                "all_steering_vectors": all_steering_vectors,
-            }
-
-            # Log information about the specialized steering vectors
-            logger.info(
-                f"Calculated specialized steering vectors for {strategy} strategy:"
-            )
-            for name, data in all_steering_vectors.items():
-                vector = data["vector"]
-                logger.info(
-                    f"  - {name}: mean={np.mean(vector):.4f}, std={np.std(vector):.4f}, norm={np.linalg.norm(vector):.4f}"
-                )
-
-        # Create directory for plots
-        plots_dir = os.path.join(run_dir, "plots")
-        os.makedirs(plots_dir, exist_ok=True)
-
-        # Set the current strategy being used for the model
-        current_strategy = (
-            "last-token"  # This is the strategy used for training the model
+        print(
+            f"Processing layer {layer_idx} - Using {len(hate_yes_texts)} hate_yes texts, "
+            f"{len(safe_no_texts)} safe_no texts, {len(safe_yes_texts)} safe_yes texts, "
+            f"{len(hate_no_texts)} hate_no texts"
         )
 
-        # Plot all strategies in a single figure
-        from tr_plotting import plot_vectors_all_strategies
-
-        # Create a unified plot for all strategies
-        plot_path = os.path.join(
-            plots_dir, f"vectors_layer_{layer_idx}_all_strategies.png"
-        )
-
-        # Create a dictionary with all embedding strategies data
-        all_strategy_data = {}
-
-        for strategy in strategies:
-            # Access the representations dictionary we created earlier
-            all_strategy_data[strategy] = {
-                "hate": representations[strategy]["hate"],
-                "safe": representations[strategy]["safe"],
-                "hate_types": representations[strategy]["hate_types"],
-                "safe_types": representations[strategy]["safe_types"],
-                "steering_vector": steering_vectors[strategy],
-            }
-
-        # Get steering vectors for plotting (only for the last-token strategy)
-        plot_steering_vectors = None
-        if is_enhanced_dataset:
-            plot_steering_vectors = {
-                "hate_yes_to_safe_yes": {
-                    "vector": steering_vectors["hate_yes_to_safe_yes"],
-                    "color": "#00CC00",  # Bright green
-                    "label": "Hate Yes → Safe Yes",
-                },
-                "safe_no_to_hate_no": {
-                    "vector": steering_vectors["safe_no_to_hate_no"],
-                    "color": "#9900FF",  # Purple
-                    "label": "Safe No → Hate No",
-                },
-                "hate_yes_to_hate_no": {
-                    "vector": steering_vectors["hate_yes_to_hate_no"],
-                    "color": "#FF9900",  # Orange
-                    "label": "Hate Yes → Hate No",
-                },
-                "safe_no_to_safe_yes": {
-                    "vector": steering_vectors["safe_no_to_safe_yes"],
-                    "color": "#00FFCC",  # Teal
-                    "label": "Safe No → Safe Yes",
-                },
-                "combined": {
-                    "vector": steering_vectors["combined"],
-                    "color": "#FF00FF",  # Magenta
-                    "label": "(Hate Yes + Safe No) → (Safe Yes + Hate No)",
-                },
-            }
-
-            # Also create individual plots for each steering vector type
-            # These plots will show only the relevant data points for each transformation
-            if is_enhanced_dataset and all(
-                v is not None
-                for v in [
-                    representations["last-token"]["hate_yes"],
-                    representations["last-token"]["hate_no"],
-                    representations["last-token"]["safe_yes"],
-                    representations["last-token"]["safe_no"],
-                ]
-            ):
-                # Generate combined plot for last-token strategy
-                plot_individual_steering_vectors(
-                    plot_dir=plots_dir,
-                    layer_idx=layer_idx,
-                    all_steering_vectors=representations["last-token"][
-                        "all_steering_vectors"
-                    ],
-                    hate_yes_vectors=representations["last-token"]["hate_yes"],
-                    hate_no_vectors=representations["last-token"]["hate_no"],
-                    safe_yes_vectors=representations["last-token"]["safe_yes"],
-                    safe_no_vectors=representations["last-token"]["safe_no"],
-                    strategy="last-token",
-                )
-
-                # Generate combined plot for first-token strategy
-                plot_individual_steering_vectors(
-                    plot_dir=plots_dir,
-                    layer_idx=layer_idx,
-                    all_steering_vectors=representations["first-token"][
-                        "all_steering_vectors"
-                    ],
-                    hate_yes_vectors=representations["first-token"]["hate_yes"],
-                    hate_no_vectors=representations["first-token"]["hate_no"],
-                    safe_yes_vectors=representations["first-token"]["safe_yes"],
-                    safe_no_vectors=representations["first-token"]["safe_no"],
-                    strategy="first-token",
-                )
-
-                # Generate combined plot for mean strategy
-                plot_individual_steering_vectors(
-                    plot_dir=plots_dir,
-                    layer_idx=layer_idx,
-                    all_steering_vectors=representations["mean"][
-                        "all_steering_vectors"
-                    ],
-                    hate_yes_vectors=representations["mean"]["hate_yes"],
-                    hate_no_vectors=representations["mean"]["hate_no"],
-                    safe_yes_vectors=representations["mean"]["safe_yes"],
-                    safe_no_vectors=representations["mean"]["safe_no"],
-                    strategy="mean",
-                )
-
-        # Call a new function that will handle all strategies in one plot
-        plot_vectors_all_strategies(
-            layer_idx=layer_idx,
-            all_strategy_data=all_strategy_data,
-            current_strategy=current_strategy,
-            save_path=plot_path,
-            all_steering_vectors=plot_steering_vectors,
-        )
-
-        logger.info(f"Saved vector plot with all strategies to {plot_path}")
-
-        # Create a unified plot with all strategies and all steering vectors in a grid
-        plot_all_strategies_steering_vectors(
-            plot_dir=plots_dir,
-            layer_idx=layer_idx,
-            representations={
-                strategy: {
-                    "hate_yes": representations[strategy]["hate_yes"],
-                    "hate_no": representations[strategy]["hate_no"],
-                    "safe_yes": representations[strategy]["safe_yes"],
-                    "safe_no": representations[strategy]["safe_no"],
-                    "hate": representations[strategy]["hate"],
-                    "safe": representations[strategy]["safe"],
-                    "hate_types": representations[strategy]["hate_types"],
-                    "safe_types": representations[strategy]["safe_types"],
-                }
-                for strategy in strategies
-            },
-            all_steering_vectors_by_strategy={
-                strategy: representations[strategy]["all_steering_vectors"]
-                for strategy in strategies
-            },
-        )
-        logger.info(f"Saved comprehensive steering vector grid for layer {layer_idx}")
-
-        # Use the last-token strategy for the rest of the analysis, as it's the one used for training
-        hate_representation = representations["last-token"]["hate"]
-        safe_representation = representations["last-token"]["safe"]
-        steering_vector = steering_vectors["last-token"]
-        hate_mean_vector = mean_vectors["last-token"]["hate"]
-        safe_mean_vector = mean_vectors["last-token"]["safe"]
-        # All vector plots have been saved in the loop above
-
-        # Evaluate with different steering coefficients
-        if steering_coefficients is None:
-            steering_coefficients = [0.0, 0.5, 1.0, 2.0, 5.0]
-
-        layer_results = {}
-        for coef in steering_coefficients:
-            logger.info(f"\nEvaluating with steering coefficient: {coef}")
-
-            # Get predictions with steering
-            predictions, confidences = ccs.predict_with_steering(
-                test_dataloader=test_dataloader,
-                steering_vector=steering_vector,
-                steering_coefficient=coef,
-            )
-
-            # Log prediction statistics
-            logger.info(f"Prediction statistics for coefficient {coef}:")
-            logger.info(f"Mean confidence: {confidences.mean():.4f}")
-            logger.info(f"Confidence std: {confidences.std():.4f}")
-
-            # Convert predictions to integers and ensure it's 1D before using bincount
-            pred_array = np.asarray(predictions, dtype=np.int64).flatten()
-            logger.info(f"Prediction distribution: {np.bincount(pred_array)}")
-
-            # Evaluate performance
-            metrics = evaluate_ccs_performance(
-                ccs=ccs,
-                X_hate_test=test_dataloader.dataset.hate_data,
-                X_safe_test=test_dataloader.dataset.safe_data,
-                y_test=test_dataloader.dataset.labels,
-            )
-
-            layer_results[f"coef_{coef}"] = metrics
-
-            # Log metrics
-            logger.info(f"Metrics for coefficient {coef}:")
-            for metric_name, metric_value in metrics.items():
-                logger.info(f"{metric_name}: {metric_value:.4f}")
-
-        results[layer_idx] = layer_results
-
-    # Create a summary plot of all steering vectors
-
-    # Prepare data for plotting all layers
-    all_data = []
-    all_hate_vectors = []
-    all_safe_vectors = []
-
-    for layer_idx in range(n_layers):
-        # Access the previously computed results
-        layer_results = results[layer_idx]
-
-        # Recompute representations only if we need them for plotting
-        # We'll reuse the last representations we have from the layer computation
-        if is_enhanced_dataset:
-            hate_yes_texts = train_dataloader.dataset.get_by_type("hate_yes")[:100]
-            safe_yes_texts = train_dataloader.dataset.get_by_type("safe_yes")[:100]
-
-            hate_representation = vectorize_df(
-                df_text=hate_yes_texts,
+        # Process hate data (hate_yes + safe_no)
+        hate_vectors_list = []
+        for text in hate_yes_texts + safe_no_texts:
+            vector = extract_representation(
                 model=model,
                 tokenizer=tokenizer,
+                text=text,
                 layer_index=layer_idx,
                 strategy="last-token",
                 device=device,
-                name_source_data="hate_yes",
             )
-            safe_representation = vectorize_df(
-                df_text=safe_yes_texts,
+            hate_vectors_list.append(vector)
+        hate_vectors = np.array(hate_vectors_list)
+
+        # Process safe data (safe_yes + hate_no)
+        safe_vectors_list = []
+        for text in safe_yes_texts + hate_no_texts:
+            vector = extract_representation(
                 model=model,
                 tokenizer=tokenizer,
+                text=text,
                 layer_index=layer_idx,
                 strategy="last-token",
                 device=device,
-                name_source_data="safe_yes",
             )
-        else:
-            hate_texts = [
-                text for batch in train_dataloader for text in batch["hate_data"]
-            ]
-            safe_texts = [
-                text for batch in train_dataloader for text in batch["safe_data"]
-            ]
-            hate_representation = vectorize_df(
-                df_text=hate_texts[:100],  # Limit to 100 samples for faster plotting
-                model=model,
-                tokenizer=tokenizer,
-                layer_index=layer_idx,
-                strategy="last-token",
-                device=device,
-                name_source_data="hate",
-            )
-            safe_representation = vectorize_df(
-                df_text=safe_texts[:100],  # Limit to 100 samples for faster plotting
-                model=model,
-                tokenizer=tokenizer,
-                layer_index=layer_idx,
-                strategy="last-token",
-                device=device,
-                name_source_data="safe",
-            )
+            safe_vectors_list.append(vector)
+        safe_vectors = np.array(safe_vectors_list)
 
-        # Compute steering vector - but keep original shape for plotting data distribution
-        hate_mean_vector = np.mean(
-            hate_representation.reshape(hate_representation.shape[0], -1), axis=0
-        )
-        safe_mean_vector = np.mean(
-            safe_representation.reshape(safe_representation.shape[0], -1), axis=0
-        )
-        steering_vector = safe_mean_vector - hate_mean_vector
+        # Calculate steering vector
+        steering_vector = compute_steering_vector(hate_vectors, safe_vectors)
 
-        # Store data for plotting
-        all_data.append(
-            {
-                "hate_mean_vector": hate_mean_vector,
-                "safe_mean_vector": safe_mean_vector,
-                "steering_vector": steering_vector,
-            }
-        )
-
-        # Store original representations for plotting all points
-        all_hate_vectors.append(hate_representation)  # Keep original shape
-        all_safe_vectors.append(safe_representation)  # Keep original shape
-
-    # Get multiple steering vectors for the enhanced mode
-    all_steering_vectors = None
-
-    # Always create specialized steering vectors when we have the necessary data
-    # For enhanced dataset, we can create multiple steering vectors
-    try:
-        # Try to get the data by type - this works for enhanced dataset
-        hate_yes_texts = train_dataloader.dataset.get_by_type("hate_yes")[:100]
-        safe_yes_texts = train_dataloader.dataset.get_by_type("safe_yes")[:100]
-        hate_no_texts = train_dataloader.dataset.get_by_type("hate_no")[:100]
-        safe_no_texts = train_dataloader.dataset.get_by_type("safe_no")[:100]
-
-        # Use the same layer index for vectorization
-        layer_idx = n_layers - 1  # Use the last layer
-
-        # Vectorize all types
-        hate_yes_representation = vectorize_df(
-            df_text=hate_yes_texts,
-            model=model,
-            tokenizer=tokenizer,
-            layer_index=layer_idx,
-            strategy="last-token",
-            device=device,
-            name_source_data="hate_yes",
-        )
-
-        safe_yes_representation = vectorize_df(
-            df_text=safe_yes_texts,
-            model=model,
-            tokenizer=tokenizer,
-            layer_index=layer_idx,
-            strategy="last-token",
-            device=device,
-            name_source_data="safe_yes",
-        )
-
-        hate_no_representation = vectorize_df(
-            df_text=hate_no_texts,
-            model=model,
-            tokenizer=tokenizer,
-            layer_index=layer_idx,
-            strategy="last-token",
-            device=device,
-            name_source_data="hate_no",
-        )
-
-        safe_no_representation = vectorize_df(
-            df_text=safe_no_texts,
-            model=model,
-            tokenizer=tokenizer,
-            layer_index=layer_idx,
-            strategy="last-token",
-            device=device,
-            name_source_data="safe_no",
-        )
-
-        # Reshape if needed
-        if len(hate_yes_representation.shape) == 3:
-            hate_yes_representation = hate_yes_representation.reshape(
-                hate_yes_representation.shape[0], -1
-            )
-            safe_yes_representation = safe_yes_representation.reshape(
-                safe_yes_representation.shape[0], -1
-            )
-            hate_no_representation = hate_no_representation.reshape(
-                hate_no_representation.shape[0], -1
-            )
-            safe_no_representation = safe_no_representation.reshape(
-                safe_no_representation.shape[0], -1
-            )
-
-        # Calculate multiple steering vectors using different combinations
-        steering_vector_hate_yes_to_safe_yes = compute_steering_vector(
-            hate_yes_representation, safe_yes_representation
-        )
-
-        # Additional combinations:
-        # 1. safe_no → hate_no (inverse direction)
-        steering_vector_safe_no_to_hate_no = compute_steering_vector(
-            safe_no_representation, hate_no_representation
-        )
-
-        # 2. hate_yes → hate_no (from affirmative hate to negative hate)
-        steering_vector_hate_yes_to_hate_no = compute_steering_vector(
-            hate_yes_representation, hate_no_representation
-        )
-
-        # 3. safe_no → safe_yes (from negative safe to affirmative safe)
-        steering_vector_safe_no_to_safe_yes = compute_steering_vector(
-            safe_no_representation, safe_yes_representation
-        )
-
-        # 4. Concatenated: (hate_yes + safe_no) → (safe_yes + hate_no)
-        combined_source = np.vstack([hate_yes_representation, safe_no_representation])
-        combined_target = np.vstack([safe_yes_representation, hate_no_representation])
-
-        # Calculate mean for concatenated vectors
-        combined_source_mean = np.mean(combined_source, axis=0)
-        combined_target_mean = np.mean(combined_target, axis=0)
-
-        # Compute steering vector for combined categories
-        steering_vector_combined = combined_target_mean - combined_source_mean
-
-        # Store all steering vectors in a dictionary for plotting
-        all_steering_vectors = {
-            "hate_yes_to_safe_yes": {
-                "vector": steering_vector_hate_yes_to_safe_yes,
-                "color": "#00CC00",  # Bright green
-                "label": "Hate Yes → Safe Yes",
-            },
-            "safe_no_to_hate_no": {
-                "vector": steering_vector_safe_no_to_hate_no,
-                "color": "#9900FF",  # Purple
-                "label": "Safe No → Hate No",
-            },
-            "hate_yes_to_hate_no": {
-                "vector": steering_vector_hate_yes_to_hate_no,
-                "color": "#FF9900",  # Orange
-                "label": "Hate Yes → Hate No",
-            },
-            "safe_no_to_safe_yes": {
-                "vector": steering_vector_safe_no_to_safe_yes,
-                "color": "#00FFCC",  # Teal
-                "label": "Safe No → Safe Yes",
-            },
-            "combined": {
-                "vector": steering_vector_combined,
-                "color": "#FF00FF",  # Magenta
-                "label": "(Hate Yes + Safe No) → (Safe Yes + Hate No)",
-            },
+        # Store data for visualization
+        layer_data = {
+            "ccs": ccs,
+            "layer_idx": layer_idx,
+            "hate_vectors": hate_vectors,
+            "safe_vectors": safe_vectors,
+            "steering_vector": steering_vector,
+            "hate_mean_vector": np.mean(
+                hate_vectors.reshape(hate_vectors.shape[0], -1), axis=0
+            ),
+            "safe_mean_vector": np.mean(
+                safe_vectors.reshape(safe_vectors.shape[0], -1), axis=0
+            ),
         }
+        all_layer_data.append(layer_data)
 
-        # Log the different steering vectors
-        logger.info("Successfully calculated multiple steering vectors:")
-        for name, data in all_steering_vectors.items():
-            vector = data["vector"]
-            logger.info(
-                f"  - {name}: mean={vector.mean():.4f}, std={vector.std():.4f}, norm={np.linalg.norm(vector):.4f}"
-            )
-    except Exception as e:
-        logger.info(f"Could not calculate specialized steering vectors: {e}")
-        logger.info("Will use default steering vector only")
+        ############### METRICS CALCULATION ###############
+        # Initialize layer result dictionary
+        layer_result: dict[str, any] = {"layer_idx": layer_idx}
 
-    # Plot all steering vectors
-    plots_dir = os.path.join(run_dir, "plots")
-    all_vectors_path = os.path.join(plots_dir, "all_steering_vectors.png")
-
-    # Add hate_types and safe_types to the plot_all_steering_vectors call
-    # Use the types from the last entry of all_hate_vectors (if available)
-    current_hate_types = None
-    current_safe_types = None
-    if is_enhanced_dataset:
-        # Get types from the dataset
-        current_hate_types = []
-        current_safe_types = []
-        for i in range(min(len(hate_yes_texts), 100)):
-            current_hate_types.append("hate_yes")
-        for i in range(min(len(hate_no_texts), 100)):
-            current_hate_types.append("hate_no")
-        for i in range(min(len(safe_yes_texts), 100)):
-            current_safe_types.append("safe_yes")
-        for i in range(min(len(safe_no_texts), 100)):
-            current_safe_types.append("safe_no")
-
-    # plot_all_steering_vectors(
-    #     results=all_data,
-    #     hate_vectors=all_hate_vectors,
-    #     safe_vectors=all_safe_vectors,
-    #     log_base=os.path.join(plots_dir, "all_steering_vectors"),
-    #     all_steering_vectors=all_steering_vectors,
-    #     hate_types=current_hate_types,
-    #     safe_types=current_safe_types,
-    # )
-    # logger.info(f"Saved all steering vectors plot to {all_vectors_path}")
-
-    # Generate performance across layers plots for each metric
-    from tr_plotting import (
-        plot_all_decision_boundaries,
-        plot_all_layer_vectors,
-        plot_performance_across_layers,
-        visualize_decision_boundary,
-    )
-
-    metrics = ["accuracy", "auc", "silhouette"]
-    for metric in metrics:
-        metric_plot_path = os.path.join(plots_dir, f"performance_{metric}.png")
-        plot_performance_across_layers(
-            results=results, metric=metric, save_path=metric_plot_path
-        )
-        logger.info(f"Saved {metric} performance plot to {metric_plot_path}")
-
-    # Plot all layer vectors in a grid
-    layer_vectors_plot_path = os.path.join(plots_dir, "all_layer_vectors.png")
-    plot_all_layer_vectors(results=all_data, save_dir=plots_dir)
-    logger.info("Saved layer vectors grid plot")
-
-    # Prepare data for decision boundary plots
-    layers_data = []
-    for layer_idx in range(n_layers):
-        # Initialize CCS for this layer
-        ccs = CCS(
-            model=model,
-            tokenizer=tokenizer,
-            layer_idx=layer_idx,
-            device=device,
-        )
-
-        # Get data vectors for visualization
-        if is_enhanced_dataset:
-            hate_texts = train_dataloader.dataset.get_by_type("hate_yes")[:100]
-            safe_texts = train_dataloader.dataset.get_by_type("safe_yes")[:100]
+        # Include training metrics from the training result
+        if (
+            training_result
+            and isinstance(training_result, dict)
+            and "final_metrics" in training_result
+        ):
+            layer_result["final_metrics"] = training_result["final_metrics"]
         else:
-            hate_texts = [
-                text for batch in test_dataloader for text in batch["hate_data"]
-            ]
-            safe_texts = [
-                text for batch in test_dataloader for text in batch["safe_data"]
-            ]
+            layer_result["final_metrics"] = {"base_metrics": {}}
 
-            # Limit the number of samples for faster visualization
-            max_samples = 100
-            hate_texts = hate_texts[:max_samples]
-            safe_texts = safe_texts[:max_samples]
+        # Calculate class separability
+        class_sep = float(compute_class_separability(hate_vectors, safe_vectors))
+        layer_result["class_separability"] = class_sep
+        print(f"Layer {layer_idx} - Class separability: {class_sep:.4f}")
 
-        hate_representation = vectorize_df(
-            df_text=hate_texts,
-            model=model,
-            tokenizer=tokenizer,
-            layer_index=layer_idx,
-            strategy="last-token",
-            device=device,
-            name_source_data="hate",
-        )
-        safe_representation = vectorize_df(
-            df_text=safe_texts,
-            model=model,
-            tokenizer=tokenizer,
-            layer_index=layer_idx,
-            strategy="last-token",
-            device=device,
-            name_source_data="safe",
+        # Calculate subspace analysis
+        subspace_results = subspace_analysis(hate_vectors, safe_vectors)
+        layer_result["subspace_analysis"] = {
+            "top_component_separation": float(
+                subspace_results["separations"][0]["accuracy"]
+            ),
+            "variance_explained": float(
+                subspace_results["separations"][0]["variance_explained"]
+            ),
+        }
+        print(
+            f"Layer {layer_idx} - Subspace separation: {layer_result['subspace_analysis']['top_component_separation']:.4f}"
         )
 
-        # Compute steering vector
-        hate_mean_vector = np.mean(hate_representation, axis=0)
-        safe_mean_vector = np.mean(safe_representation, axis=0)
-        steering_vector = safe_mean_vector - hate_mean_vector
-
-        # Store layer data
-        layers_data.append(
-            {
-                "ccs": ccs,
-                "layer_idx": layer_idx,
-                "hate_vectors": hate_representation,
-                "safe_vectors": safe_representation,
-                "steering_vector": steering_vector,
-            }
-        )
-
-        # Generate decision boundary visualization for each layer
-        decision_boundary_path = os.path.join(
-            plots_dir, f"decision_boundary_layer_{layer_idx}.png"
-        )
+        ############### LAYER-SPECIFIC PLOTTING ###############
+        # Visualize the decision boundary for the first layer
         visualize_decision_boundary(
             ccs=ccs,
-            hate_vectors=hate_representation,
-            safe_vectors=safe_representation,
+            hate_vectors=hate_vectors,
+            safe_vectors=safe_vectors,
             steering_vector=steering_vector,
-            log_base=os.path.join(plots_dir, f"decision_boundary_layer_{layer_idx}"),
+            log_base=os.path.join(plot_dir, f"layer_{layer_idx}"),
         )
-        logger.info(f"Saved decision boundary plot for layer {layer_idx}")
+        print(f"Generated decision boundary visualization for layer {layer_idx}")
 
-    # Plot all decision boundaries
-    all_boundaries_path = os.path.join(plots_dir, "all_decision_boundaries.png")
+        # We'll create detailed decision boundary visualization after layer_strategy_data is populated
+
+        # Extract different types of representations for all embedding strategies
+        all_strategies = ["last-token", "first-token", "mean"]
+        layer_strategy_data = {}
+
+        for strategy in all_strategies:
+            # Get representations for each data type
+            hate_yes_vecs = []
+            hate_no_vecs = []
+            safe_yes_vecs = []
+            safe_no_vecs = []
+
+            print(f"Extracting {strategy} embeddings for layer {layer_idx}...")
+
+            # Extract hate_yes representations
+            for text in hate_yes_texts:
+                rep = extract_representation(
+                    model=model,
+                    tokenizer=tokenizer,
+                    text=text,
+                    layer_index=layer_idx,
+                    strategy=strategy,
+                    device=device,
+                )
+                hate_yes_vecs.append(rep)
+
+            # Extract hate_no representations
+            for text in hate_no_texts:
+                rep = extract_representation(
+                    model=model,
+                    tokenizer=tokenizer,
+                    text=text,
+                    layer_index=layer_idx,
+                    strategy=strategy,
+                    device=device,
+                )
+                hate_no_vecs.append(rep)
+
+            # Extract safe_yes representations
+            for text in safe_yes_texts:
+                rep = extract_representation(
+                    model=model,
+                    tokenizer=tokenizer,
+                    text=text,
+                    layer_index=layer_idx,
+                    strategy=strategy,
+                    device=device,
+                )
+                safe_yes_vecs.append(rep)
+
+            # Extract safe_no representations
+            for text in safe_no_texts:
+                rep = extract_representation(
+                    model=model,
+                    tokenizer=tokenizer,
+                    text=text,
+                    layer_index=layer_idx,
+                    strategy=strategy,
+                    device=device,
+                )
+                safe_no_vecs.append(rep)
+
+            # Convert to numpy arrays
+            hate_yes_vecs = np.array(hate_yes_vecs)
+            hate_no_vecs = np.array(hate_no_vecs)
+            safe_yes_vecs = np.array(safe_yes_vecs)
+            safe_no_vecs = np.array(safe_no_vecs)
+
+            # Store in layer strategy data
+            layer_strategy_data[strategy] = {
+                "hate_yes": hate_yes_vecs,
+                "hate_no": hate_no_vecs,
+                "safe_yes": safe_yes_vecs,
+                "safe_no": safe_no_vecs,
+                "hate": np.vstack([hate_yes_vecs, safe_no_vecs]),
+                "safe": np.vstack([safe_yes_vecs, hate_no_vecs]),
+            }
+
+            # Calculate steering vectors for each strategy
+            hate_vecs = np.vstack([hate_yes_vecs, safe_no_vecs])
+            safe_vecs = np.vstack([safe_yes_vecs, hate_no_vecs])
+
+            # Combined steering vector
+            combined_steering = compute_steering_vector(hate_vecs, safe_vecs)
+
+            # Specific steering vectors
+            hate_yes_to_safe_yes = compute_steering_vector(hate_yes_vecs, safe_yes_vecs)
+            safe_no_to_hate_no = compute_steering_vector(safe_no_vecs, hate_no_vecs)
+            hate_yes_to_hate_no = compute_steering_vector(hate_yes_vecs, hate_no_vecs)
+            safe_no_to_safe_yes = compute_steering_vector(safe_no_vecs, safe_yes_vecs)
+
+            # Store steering vectors
+            if strategy not in all_steering_vectors:
+                all_steering_vectors[strategy] = {}
+
+            all_steering_vectors[strategy]["combined"] = {
+                "vector": combined_steering,
+                "color": "#00FF00",  # Green
+                "label": "Combined Steering Vector",
+            }
+
+            all_steering_vectors[strategy]["hate_yes_to_safe_yes"] = {
+                "vector": hate_yes_to_safe_yes,
+                "color": "#FF00FF",  # Purple
+                "label": "Hate Yes → Safe Yes",
+            }
+
+            all_steering_vectors[strategy]["safe_no_to_hate_no"] = {
+                "vector": safe_no_to_hate_no,
+                "color": "#FFFF00",  # Yellow
+                "label": "Safe No → Hate No",
+            }
+
+            all_steering_vectors[strategy]["hate_yes_to_hate_no"] = {
+                "vector": hate_yes_to_hate_no,
+                "color": "#FF9900",  # Orange
+                "label": "Hate Yes → Hate No",
+            }
+
+            all_steering_vectors[strategy]["safe_no_to_safe_yes"] = {
+                "vector": safe_no_to_safe_yes,
+                "color": "#00FFCC",  # Teal
+                "label": "Safe No → Safe Yes",
+            }
+
+        # Store strategy data for this layer
+        all_strategy_data[layer_idx] = layer_strategy_data
+
+        # Create detailed decision boundary visualization with separated data types
+        if layer_idx == 0 or layer_idx == n_layers - 1:  # For first and last layer
+            strategy = "last-token"
+            hate_yes_vectors = layer_strategy_data[strategy]["hate_yes"]
+            hate_no_vectors = layer_strategy_data[strategy]["hate_no"]
+            safe_yes_vectors = layer_strategy_data[strategy]["safe_yes"]
+            safe_no_vectors = layer_strategy_data[strategy]["safe_no"]
+
+            visualize_detailed_decision_boundary(
+                ccs=ccs,
+                hate_yes_vectors=hate_yes_vectors,
+                hate_no_vectors=hate_no_vectors,
+                safe_yes_vectors=safe_yes_vectors,
+                safe_no_vectors=safe_no_vectors,
+                steering_vector=steering_vector,
+                layer_idx=layer_idx,
+                log_base=os.path.join(plot_dir, f"layer_{layer_idx}_detailed"),
+            )
+            print(
+                f"Generated detailed decision boundary visualization for layer {layer_idx}"
+            )
+
+        # Generate visualizations for layer-specific strategies
+        # Plot vectors for all strategies
+        plot_vectors_all_strategies(
+            layer_idx=layer_idx,
+            all_strategy_data=layer_strategy_data,
+            current_strategy="last-token",
+            save_path=os.path.join(
+                plot_dir, f"layer_{layer_idx}_all_strategies_vectors.png"
+            ),
+            all_steering_vectors=all_steering_vectors["last-token"],
+        )
+
+        # Plot individual steering vectors for each strategy
+        for strategy in all_strategies:
+            plot_individual_steering_vectors(
+                plot_dir=plot_dir,
+                layer_idx=layer_idx,
+                all_steering_vectors=all_steering_vectors[strategy],
+                hate_yes_vectors=layer_strategy_data[strategy]["hate_yes"],
+                safe_yes_vectors=layer_strategy_data[strategy]["safe_yes"],
+                hate_no_vectors=layer_strategy_data[strategy]["hate_no"],
+                safe_no_vectors=layer_strategy_data[strategy]["safe_no"],
+                strategy=strategy,
+            )
+
+        # Plot all strategies and steering vectors in a comprehensive visualization
+        plot_all_strategies_all_steering_vectors(
+            plot_dir=plot_dir,
+            layer_idx=layer_idx,
+            representations=layer_strategy_data,
+            all_steering_vectors_by_strategy=all_steering_vectors,
+        )
+
+        ############### ADDITIONAL METRICS CALCULATION ###############
+        print(f"\nCalculating additional metrics for layer {layer_idx}...")
+
+        # Calculate agreement score
+        # Note: We'd need predictions for pairs of statements to compute this properly
+        # This is a simplified example
+        hate_test_indices = np.random.choice(
+            len(hate_vectors), min(10, len(hate_vectors)), replace=False
+        )
+        safe_test_indices = np.random.choice(
+            len(safe_vectors), min(10, len(safe_vectors)), replace=False
+        )
+
+        hate_test = hate_vectors[hate_test_indices]
+        safe_test = safe_vectors[safe_test_indices]
+
+        # Get predictions
+        with torch.no_grad():
+            hate_preds = ccs.probe(torch.tensor(hate_test, device=device)).cpu().numpy()
+            safe_preds = ccs.probe(torch.tensor(safe_test, device=device)).cpu().numpy()
+
+            # Calculate metrics
+            agreement = float(
+                np.mean(agreement_score(hate_preds, safe_preds, safe_preds, hate_preds))
+            )
+            contradiction = float(
+                np.mean(
+                    contradiction_index(hate_preds, safe_preds, safe_preds, hate_preds)
+                )
+            )
+            ideal_distance = float(
+                np.mean(
+                    ideal_representation_distance(
+                        hate_preds, safe_preds, safe_preds, hate_preds
+                    )
+                )
+            )
+
+            # Representation stability
+            stability = representation_stability(
+                ccs, hate_vectors, perturbation_scale=0.01, n_perturbations=5
+            )
+
+            # Fisher information analysis
+            fisher_info = fisher_information_analysis(
+                ccs, hate_vectors, steering_vector
+            )
+
+            # Store additional metrics
+            layer_result["agreement_score"] = agreement
+            layer_result["contradiction_index"] = contradiction
+            layer_result["ideal_distance"] = ideal_distance
+            layer_result["representation_stability"] = stability
+            layer_result["max_sensitivity_point"] = fisher_info["max_sensitivity_point"]
+            layer_result["max_sensitivity_value"] = fisher_info["max_sensitivity_value"]
+
+            print(f"Layer {layer_idx} - Agreement score: {agreement:.4f}")
+            print(f"Layer {layer_idx} - Contradiction index: {contradiction:.4f}")
+            print(f"Layer {layer_idx} - Ideal distance: {ideal_distance:.4f}")
+            print(f"Layer {layer_idx} - Representation stability: {stability:.4f}")
+            print(
+                f"Layer {layer_idx} - Max sensitivity at point: {fisher_info['max_sensitivity_point']:.4f}"
+            )
+
+        # Store results
+        results.append(layer_result)
+
+    ############### CROSS-LAYER PLOTTING ###############
+    print("\nGenerating visualizations for all layers...")
+
+    # 1. Plot all decision boundaries in a grid
     plot_all_decision_boundaries(
-        layers_data=layers_data,
-        log_base=os.path.join(plots_dir, "all_decision_boundaries"),
+        layers_data=all_layer_data,
+        log_base=os.path.join(plot_dir, "all_decision_boundaries"),
     )
-    logger.info("Saved all decision boundaries plot")
+    print(
+        f"Saved all decision boundaries plot to {os.path.join(plot_dir, 'all_decision_boundaries.png')}"
+    )
 
-    return results
+    # 2. Generate individual decision boundary plots for each layer
+    for layer_idx, layer_data in enumerate(all_layer_data):
+        if layer_idx > 0:  # We already did layer 0 during training
+            decision_boundary_path = os.path.join(plot_dir, f"layer_{layer_idx}")
+            visualize_decision_boundary(
+                ccs=layer_data["ccs"],
+                hate_vectors=layer_data["hate_vectors"],
+                safe_vectors=layer_data["safe_vectors"],
+                steering_vector=layer_data["steering_vector"],
+                log_base=decision_boundary_path,
+            )
+            print(f"Saved decision boundary plot for layer {layer_idx}")
 
+    # 3. Plot vectors across all layers
+    plot_all_layer_vectors(results=all_layer_data, save_dir=plot_dir)
+    print(
+        f"Saved all layer vectors plot to {os.path.join(plot_dir, 'all_layer_vectors.png')}"
+    )
 
-def combine_steering_plots(plot_dir, layer_idx, strategy="last-token"):
-    """
-    Create a combined plot with all steering vector types in a single figure with subplots in one row.
+    # 4. Plot performance metrics across layers
+    metrics_plot_path = os.path.join(plot_dir, "performance_accuracy.png")
+    plot_performance_across_layers(
+        results=results, metric="accuracy", save_path=metrics_plot_path
+    )
+    print(f"Saved performance metrics plot to {metrics_plot_path}")
 
-    Args:
-        plot_dir: Directory to save the combined plot
-        layer_idx: Layer index
-        strategy: Embedding strategy used
-    """
-    import os
-
-    import matplotlib.pyplot as plt
-
-    # Define the transformation types to include
-    transformations = [
-        "combined",
-        "hate_yes_to_safe_yes",
-        "safe_no_to_hate_no",
-        "hate_no_to_hate_yes",
-        "safe_yes_to_safe_no",
+    # 5. Plot coefficient sweep comparison for multiple metrics
+    metrics_to_plot = [
+        "accuracy",
+        "silhouette",
+        "agreement_score",
+        "contradiction_index",
+        "representation_stability",
+        "ideal_distance",
     ]
 
-    # Create names for the transformations with readable titles
-    transformation_titles = {
-        "combined": "(Hate Yes + Safe No) → (Safe Yes + Hate No)",
-        "hate_yes_to_safe_yes": "Hate Yes → Safe Yes",
-        "safe_no_to_hate_no": "Safe No → Hate No",
-        "hate_no_to_hate_yes": "Hate No → Hate Yes",
-        "safe_yes_to_safe_no": "Safe Yes → Safe No",
-    }
+    coef_sweep_path = os.path.join(plot_dir, "coefficient_sweep_comparison.png")
+    plot_coefficient_sweep_lines_comparison(
+        results=results, metrics=metrics_to_plot, save_path=coef_sweep_path
+    )
+    print(f"Saved coefficient sweep comparison plot to {coef_sweep_path}")
 
-    # Create figure with subplots in one row
-    fig, axes = plt.subplots(
-        1, len(transformations), figsize=(7 * len(transformations), 6)
+    ############### RESULTS SUMMARY ###############
+    # Generate comprehensive results summary
+    print("\nGenerating comprehensive results summary...")
+    summary_result = print_results_summary(
+        results=results,
+        steering_coefficients=steering_coefficients,
+        model_name=model.__class__.__name__,
+        model_family=model.config.model_type,
+        model_variant=model.config.name_or_path.split("/")[-1],
+        run_dir=run_dir,
+        layer_data=all_layer_data,
+        all_strategy_data=all_strategy_data,
+        all_steering_vectors=all_steering_vectors,
     )
 
-    # Set figure title
-    fig.suptitle(
-        f"Steering Vectors - Layer {layer_idx} ({strategy} strategy)", fontsize=16
-    )
+    print(f"All visualizations have been saved to {plot_dir}")
 
-    # Set each subplot title
-    for i, trans in enumerate(transformations):
-        axes[i].set_title(transformation_titles[trans], fontsize=12)
-        axes[i].axis(
-            "off"
-        )  # Placeholder, actual plots will be filled by plot_individual_steering_vectors
-
-    # Adjust layout
-    plt.tight_layout(rect=(0, 0, 1, 0.95))  # Make room for the suptitle
-
-    # Save the combined figure path for returning
-    combined_path = os.path.join(
-        plot_dir, f"layer_{layer_idx}_{strategy}_all_steering_combined.png"
-    )
-
-    return fig, axes, combined_path
-
-
-def plot_individual_steering_vectors(
-    plot_dir,
-    layer_idx,
-    all_steering_vectors,
-    hate_yes_vectors,
-    hate_no_vectors,
-    safe_yes_vectors,
-    safe_no_vectors,
-    strategy="last-token",
-):
-    """
-    Create a combined visualization for all 5 steering vector types in a single figure with subplots:
-    1. hate_yes → safe_yes
-    2. safe_no → hate_no
-    3. safe_yes → safe_no
-    4. hate_no → hate_yes
-    5. (hate_yes + safe_no) → (safe_yes + hate_no) (combined)
-
-    Each subplot shows only the data points relevant to that specific transformation.
-
-    Args:
-        plot_dir: Directory to save the plots
-        layer_idx: Layer index
-        all_steering_vectors: Dictionary of steering vectors
-        hate_yes_vectors: Vectors for hate_yes statements
-        hate_no_vectors: Vectors for hate_no statements
-        safe_yes_vectors: Vectors for safe_yes statements
-        safe_no_vectors: Vectors for safe_no statements
-        strategy: Embedding strategy ("last-token", "first-token", or "mean")
-    """
-    import matplotlib.pyplot as plt
-    import numpy as np
-    from sklearn.decomposition import PCA
-
-    # Ensure that all vector inputs are valid
-    if any(
-        v is None
-        for v in [hate_yes_vectors, hate_no_vectors, safe_yes_vectors, safe_no_vectors]
-    ):
-        print("Skipping steering vector plots because some vectors are None")
-        return
-
-    # Get figure and axes for the combined plot
-    fig, axes, combined_path = combine_steering_plots(plot_dir, layer_idx, strategy)
-
-    # Define consistent colors and markers for each category
-    category_styles = {
-        "hate_yes": {
-            "color": "#FF0000",  # Red
-            "marker": "o",  # Round
-            "label": "Hate Yes",
-        },
-        "hate_no": {
-            "color": "#0000FF",  # Blue
-            "marker": "o",  # Round
-            "label": "Hate No",
-        },
-        "safe_yes": {
-            "color": "#0000FF",  # Blue
-            "marker": "^",  # Triangle up
-            "label": "Safe Yes",
-        },
-        "safe_no": {
-            "color": "#FF0000",  # Red
-            "marker": "^",  # Triangle up
-            "label": "Safe No",
-        },
-    }
-
-    # Define transformation pairs to visualize
-    transformations = [
-        {
-            "name": "combined",
-            "title": "(Hate Yes + Safe No) → (Safe Yes + Hate No)",
-            "source_name": "Combined Source",
-            "source_data": np.vstack([hate_yes_vectors, safe_no_vectors]),
-            "source_types": ["hate_yes"] * len(hate_yes_vectors)
-            + ["safe_no"] * len(safe_no_vectors),
-            "target_name": "Combined Target",
-            "target_data": np.vstack([safe_yes_vectors, hate_no_vectors]),
-            "target_types": ["safe_yes"] * len(safe_yes_vectors)
-            + ["hate_no"] * len(hate_no_vectors),
-            "steering_vector": all_steering_vectors["combined"]["vector"],
-            "steering_color": all_steering_vectors["combined"]["color"],
-        },
-        {
-            "name": "hate_yes_to_safe_yes",
-            "title": "Hate Yes → Safe Yes",
-            "source_type": "hate_yes",
-            "source_data": hate_yes_vectors,
-            "target_type": "safe_yes",
-            "target_data": safe_yes_vectors,
-            "steering_vector": all_steering_vectors["hate_yes_to_safe_yes"]["vector"],
-            "steering_color": all_steering_vectors["hate_yes_to_safe_yes"]["color"],
-        },
-        {
-            "name": "safe_no_to_hate_no",
-            "title": "Safe No → Hate No",
-            "source_type": "safe_no",
-            "source_data": safe_no_vectors,
-            "target_type": "hate_no",
-            "target_data": hate_no_vectors,
-            "steering_vector": all_steering_vectors["safe_no_to_hate_no"]["vector"],
-            "steering_color": all_steering_vectors["safe_no_to_hate_no"]["color"],
-        },
-        {
-            "name": "hate_no_to_hate_yes",
-            "title": "Hate No → Hate Yes",
-            "source_type": "hate_no",
-            "source_data": hate_no_vectors,
-            "target_type": "hate_yes",
-            "target_data": hate_yes_vectors,
-            "steering_vector": all_steering_vectors["hate_yes_to_hate_no"]["vector"]
-            * -1,  # Reverse direction
-            "steering_color": "#FF9900",  # Orange (same as original)
-        },
-        {
-            "name": "safe_yes_to_safe_no",
-            "title": "Safe Yes → Safe No",
-            "source_type": "safe_yes",
-            "source_data": safe_yes_vectors,
-            "target_type": "safe_no",
-            "target_data": safe_no_vectors,
-            "steering_vector": all_steering_vectors["safe_no_to_safe_yes"]["vector"]
-            * -1,  # Reverse direction
-            "steering_color": "#00FFCC",  # Teal (same as original)
-        },
-    ]
-
-    # Create a plot for each transformation
-    for i, trans in enumerate(transformations):
-        ax = axes[i]
-        ax.clear()  # Clear the placeholder
-        ax.axis("on")  # Turn axis back on
-
-        # Reshape data if needed
-        source_data = trans["source_data"]
-        target_data = trans["target_data"]
-
-        if len(source_data.shape) == 3:
-            source_data = source_data.reshape(source_data.shape[0], -1)
-
-        if len(target_data.shape) == 3:
-            target_data = target_data.reshape(target_data.shape[0], -1)
-
-        # Combine source and target data for PCA
-        combined_data = np.vstack([source_data, target_data])
-
-        # Normalize data
-        data_mean = np.mean(combined_data, axis=0, keepdims=True)
-        data_std = np.std(combined_data, axis=0, keepdims=True) + 1e-10
-        normalized_data = (combined_data - data_mean) / data_std
-
-        # Calculate source and target means
-        source_mean = np.mean(source_data, axis=0)
-        target_mean = np.mean(target_data, axis=0)
-
-        # Normalize means and steering vector
-        source_mean_norm = (source_mean - data_mean[0]) / data_std[0]
-        target_mean_norm = (target_mean - data_mean[0]) / data_std[0]
-        steering_vector_norm = (trans["steering_vector"] - data_mean[0]) / data_std[0]
-
-        # Apply PCA
-        try:
-            pca = PCA(n_components=2, svd_solver="full")
-            data_2d = pca.fit_transform(normalized_data)
-
-            # Transform means and steering vector
-            source_mean_2d = pca.transform(source_mean_norm.reshape(1, -1))[0]
-            target_mean_2d = pca.transform(target_mean_norm.reshape(1, -1))[0]
-            steering_vector_2d = pca.transform(steering_vector_norm.reshape(1, -1))[0]
-        except Exception as e:
-            print(f"PCA failed for {trans['name']}: {e}")
-            continue
-
-        # Split data back into source and target
-        n_source = len(source_data)
-        source_2d = data_2d[:n_source]
-        target_2d = data_2d[n_source:]
-
-        # Plot points
-        if "source_types" in trans:
-            # For combined case with multiple types
-            for category_type in set(trans["source_types"]):
-                indices = [
-                    i for i, t in enumerate(trans["source_types"]) if t == category_type
-                ]
-                style = category_styles[category_type]
-                ax.scatter(
-                    source_2d[indices, 0],
-                    source_2d[indices, 1],
-                    color=style["color"],
-                    alpha=0.6,
-                    s=40,
-                    marker=style["marker"],
-                    edgecolors="black",
-                    linewidths=0.5,
-                    label=style["label"],
-                    zorder=5,
-                )
-
-            for category_type in set(trans["target_types"]):
-                indices = [
-                    i for i, t in enumerate(trans["target_types"]) if t == category_type
-                ]
-                style = category_styles[category_type]
-                ax.scatter(
-                    target_2d[indices, 0],
-                    target_2d[indices, 1],
-                    color=style["color"],
-                    alpha=0.6,
-                    s=40,
-                    marker=style["marker"],
-                    edgecolors="black",
-                    linewidths=0.5,
-                    label=style["label"],
-                    zorder=5,
-                )
-        else:
-            # Simple case with single type for source and target
-            source_style = category_styles[trans["source_type"]]
-            target_style = category_styles[trans["target_type"]]
-
-            ax.scatter(
-                source_2d[:, 0],
-                source_2d[:, 1],
-                color=source_style["color"],
-                alpha=0.6,
-                s=40,
-                marker=source_style["marker"],
-                edgecolors="black",
-                linewidths=0.5,
-                label=source_style["label"],
-                zorder=5,
-            )
-
-            ax.scatter(
-                target_2d[:, 0],
-                target_2d[:, 1],
-                color=target_style["color"],
-                alpha=0.6,
-                s=40,
-                marker=target_style["marker"],
-                edgecolors="black",
-                linewidths=0.5,
-                label=target_style["label"],
-                zorder=5,
-            )
-
-        # Plot mean vectors
-        if "source_type" in trans:
-            source_style = category_styles[trans["source_type"]]
-            target_style = category_styles[trans["target_type"]]
-
-            ax.quiver(
-                0,
-                0,
-                source_mean_2d[0],
-                source_mean_2d[1],
-                color=source_style["color"],
-                label=f"{source_style['label']} Mean",
-                scale_units="xy",
-                scale=4,
-                width=0.008,
-                headwidth=5,
-                headlength=6,
-                alpha=1.0,
-                zorder=10,
-            )
-
-            ax.quiver(
-                0,
-                0,
-                target_mean_2d[0],
-                target_mean_2d[1],
-                color=target_style["color"],
-                label=f"{target_style['label']} Mean",
-                scale_units="xy",
-                scale=4,
-                width=0.008,
-                headwidth=5,
-                headlength=6,
-                alpha=1.0,
-                zorder=10,
-            )
-        else:
-            # For combined case, just use general labels
-            ax.quiver(
-                0,
-                0,
-                source_mean_2d[0],
-                source_mean_2d[1],
-                color="#880000",  # Dark red for combined source
-                label=f"{trans['source_name']} Mean",
-                scale_units="xy",
-                scale=4,
-                width=0.008,
-                headwidth=5,
-                headlength=6,
-                alpha=1.0,
-                zorder=10,
-            )
-
-            ax.quiver(
-                0,
-                0,
-                target_mean_2d[0],
-                target_mean_2d[1],
-                color="#000088",  # Dark blue for combined target
-                label=f"{trans['target_name']} Mean",
-                scale_units="xy",
-                scale=4,
-                width=0.008,
-                headwidth=5,
-                headlength=6,
-                alpha=1.0,
-                zorder=10,
-            )
-
-        # Plot steering vector
-        ax.quiver(
-            0,
-            0,
-            steering_vector_2d[0],
-            steering_vector_2d[1],
-            color=trans["steering_color"],
-            label="Steering Vector",
-            scale_units="xy",
-            scale=4,
-            width=0.008,
-            headwidth=5,
-            headlength=6,
-            alpha=1.0,
-            zorder=11,
-        )
-
-        # Set axis limits
-        x_min, x_max = np.min(data_2d[:, 0]), np.max(data_2d[:, 0])
-        y_min, y_max = np.min(data_2d[:, 1]), np.max(data_2d[:, 1])
-        x_margin = (x_max - x_min) * 0.1
-        y_margin = (y_max - y_min) * 0.1
-        ax.set_xlim(x_min - x_margin, x_max + x_margin)
-        ax.set_ylim(y_min - y_margin, y_max + y_margin)
-
-        # Add labels
-        ax.set_xlabel("Principal Component 1")
-        ax.set_ylabel("Principal Component 2")
-        ax.legend(loc="best", fontsize=8)
-        ax.grid(True, alpha=0.3)
-
-    # Add descriptive text
-    fig.text(
-        0.5,
-        0.01,
-        "Red circles: Hate statements with 'Yes', Blue circles: Hate statements with 'No'\n"
-        "Blue triangles: Safe statements with 'Yes', Red triangles: Safe statements with 'No'\n"
-        "Arrows show the steering direction between content types.",
-        ha="center",
-        fontsize=9,
-        bbox=dict(boxstyle="round", facecolor="white", alpha=0.8),
-    )
-
-    # Adjust layout to make room for text
-    plt.tight_layout(rect=(0, 0.05, 1, 0.95))
-
-    # Save combined figure
-    plt.savefig(combined_path, dpi=300, bbox_inches="tight")
-    plt.close(fig)
-
-    print(f"Saved combined steering plot to {combined_path}")
-    return combined_path
-
-
-def plot_all_strategies_steering_vectors(
-    plot_dir,
-    layer_idx,
-    representations,
-    all_steering_vectors_by_strategy,
-):
-    """
-    Create a comprehensive visualization of all steering vectors for all embedding strategies.
-    Plots a grid where:
-    - Rows are different embedding strategies (last-token, first-token, mean)
-    - Columns are different steering vector types (combined, hate_yes_to_safe_yes, etc.)
-
-    Args:
-        plot_dir: Directory to save the plot
-        layer_idx: Layer index
-        representations: Dictionary with representations for each strategy
-        all_steering_vectors_by_strategy: Dictionary of steering vectors for each strategy
-    """
-    import matplotlib.pyplot as plt
-    import numpy as np
-    from sklearn.decomposition import PCA
-
-    # Define strategies and transformations
-    strategies = ["last-token", "first-token", "mean"]
-
-    transformations = [
-        "combined",
-        "hate_yes_to_safe_yes",
-        "safe_no_to_hate_no",
-        "hate_no_to_hate_yes",
-        "safe_yes_to_safe_no",
-    ]
-
-    # Create readable titles for transformations
-    transformation_titles = {
-        "combined": "(Hate Yes + Safe No) → (Safe Yes + Hate No)",
-        "hate_yes_to_safe_yes": "Hate Yes → Safe Yes",
-        "safe_no_to_hate_no": "Safe No → Hate No",
-        "hate_no_to_hate_yes": "Hate No → Hate Yes",
-        "safe_yes_to_safe_no": "Safe Yes → Safe No",
-    }
-
-    # Define consistent colors and markers for each category
-    category_styles = {
-        "hate_yes": {
-            "color": "#FF0000",  # Red
-            "marker": "o",  # Round
-            "label": "Hate Yes",
-        },
-        "hate_no": {
-            "color": "#0000FF",  # Blue
-            "marker": "o",  # Round
-            "label": "Hate No",
-        },
-        "safe_yes": {
-            "color": "#0000FF",  # Blue
-            "marker": "^",  # Triangle up
-            "label": "Safe Yes",
-        },
-        "safe_no": {
-            "color": "#FF0000",  # Red
-            "marker": "^",  # Triangle up
-            "label": "Safe No",
-        },
-    }
-
-    # Create figure with subplots - strategies as rows, transformations as columns
-    fig, axes = plt.subplots(
-        len(strategies),
-        len(transformations),
-        figsize=(6 * len(transformations), 5 * len(strategies)),
-    )
-
-    # Process each strategy and transformation
-    for row_idx, strategy in enumerate(strategies):
-        # Get representations for this strategy
-        strategy_reps = representations[strategy]
-        hate_yes_vectors = strategy_reps["hate_yes"]
-        hate_no_vectors = strategy_reps["hate_no"]
-        safe_yes_vectors = strategy_reps["safe_yes"]
-        safe_no_vectors = strategy_reps["safe_no"]
-
-        # Get steering vectors for this strategy
-        strategy_steering_vectors = all_steering_vectors_by_strategy[strategy]
-
-        # For each transformation
-        for col_idx, trans_name in enumerate(transformations):
-            ax = axes[row_idx][col_idx]
-
-            # Set transformation-specific data
-            if trans_name == "combined":
-                source_data = np.vstack([hate_yes_vectors, safe_no_vectors])
-                source_types = ["hate_yes"] * len(hate_yes_vectors) + ["safe_no"] * len(
-                    safe_no_vectors
-                )
-                target_data = np.vstack([safe_yes_vectors, hate_no_vectors])
-                target_types = ["safe_yes"] * len(safe_yes_vectors) + ["hate_no"] * len(
-                    hate_no_vectors
-                )
-                steering_vector = strategy_steering_vectors[trans_name]["vector"]
-                steering_color = strategy_steering_vectors[trans_name]["color"]
-                use_combined = True
-            elif trans_name == "hate_yes_to_safe_yes":
-                source_data = hate_yes_vectors
-                source_type = "hate_yes"
-                target_data = safe_yes_vectors
-                target_type = "safe_yes"
-                steering_vector = strategy_steering_vectors[trans_name]["vector"]
-                steering_color = strategy_steering_vectors[trans_name]["color"]
-                use_combined = False
-            elif trans_name == "safe_no_to_hate_no":
-                source_data = safe_no_vectors
-                source_type = "safe_no"
-                target_data = hate_no_vectors
-                target_type = "hate_no"
-                steering_vector = strategy_steering_vectors[trans_name]["vector"]
-                steering_color = strategy_steering_vectors[trans_name]["color"]
-                use_combined = False
-            elif trans_name == "hate_no_to_hate_yes":
-                source_data = hate_no_vectors
-                source_type = "hate_no"
-                target_data = hate_yes_vectors
-                target_type = "hate_yes"
-                steering_vector = (
-                    strategy_steering_vectors["hate_yes_to_hate_no"]["vector"] * -1
-                )  # Reverse
-                steering_color = "#FF9900"  # Orange
-                use_combined = False
-            elif trans_name == "safe_yes_to_safe_no":
-                source_data = safe_yes_vectors
-                source_type = "safe_yes"
-                target_data = safe_no_vectors
-                target_type = "safe_no"
-                steering_vector = (
-                    strategy_steering_vectors["safe_no_to_safe_yes"]["vector"] * -1
-                )  # Reverse
-                steering_color = "#00FFCC"  # Teal
-                use_combined = False
-
-            # Reshape data if needed
-            if len(source_data.shape) == 3:
-                source_data = source_data.reshape(source_data.shape[0], -1)
-            if len(target_data.shape) == 3:
-                target_data = target_data.reshape(target_data.shape[0], -1)
-
-            # Combine source and target data for PCA
-            combined_data = np.vstack([source_data, target_data])
-
-            # Normalize data
-            data_mean = np.mean(combined_data, axis=0, keepdims=True)
-            data_std = np.std(combined_data, axis=0, keepdims=True) + 1e-10
-            normalized_data = (combined_data - data_mean) / data_std
-
-            # Calculate source and target means
-            source_mean = np.mean(source_data, axis=0)
-            target_mean = np.mean(target_data, axis=0)
-
-            # Normalize means and steering vector
-            source_mean_norm = (source_mean - data_mean[0]) / data_std[0]
-            target_mean_norm = (target_mean - data_mean[0]) / data_std[0]
-            steering_vector_norm = (steering_vector - data_mean[0]) / data_std[0]
-
-            # Apply PCA
-            try:
-                pca = PCA(n_components=2, svd_solver="full")
-                data_2d = pca.fit_transform(normalized_data)
-
-                # Transform means and steering vector
-                source_mean_2d = pca.transform(source_mean_norm.reshape(1, -1))[0]
-                target_mean_2d = pca.transform(target_mean_norm.reshape(1, -1))[0]
-                steering_vector_2d = pca.transform(steering_vector_norm.reshape(1, -1))[
-                    0
-                ]
-            except Exception as e:
-                print(f"PCA failed for {strategy} - {trans_name}: {e}")
-                continue
-
-            # Split data back into source and target
-            n_source = len(source_data)
-            source_2d = data_2d[:n_source]
-            target_2d = data_2d[n_source:]
-
-            # Plot points
-            if use_combined:
-                # For combined case with multiple types
-                for category_type in set(source_types):
-                    indices = [
-                        i for i, t in enumerate(source_types) if t == category_type
-                    ]
-                    style = category_styles[category_type]
-                    ax.scatter(
-                        source_2d[indices, 0],
-                        source_2d[indices, 1],
-                        color=style["color"],
-                        alpha=0.6,
-                        s=40,
-                        marker=style["marker"],
-                        edgecolors="black",
-                        linewidths=0.5,
-                        label=style["label"] if row_idx == 0 and col_idx == 0 else "",
-                        zorder=5,
-                    )
-
-                for category_type in set(target_types):
-                    indices = [
-                        i for i, t in enumerate(target_types) if t == category_type
-                    ]
-                    style = category_styles[category_type]
-                    ax.scatter(
-                        target_2d[indices, 0],
-                        target_2d[indices, 1],
-                        color=style["color"],
-                        alpha=0.6,
-                        s=40,
-                        marker=style["marker"],
-                        edgecolors="black",
-                        linewidths=0.5,
-                        label=style["label"] if row_idx == 0 and col_idx == 0 else "",
-                        zorder=5,
-                    )
-            else:
-                # Simple case with single type for source and target
-                source_style = category_styles[source_type]
-                target_style = category_styles[target_type]
-
-                ax.scatter(
-                    source_2d[:, 0],
-                    source_2d[:, 1],
-                    color=source_style["color"],
-                    alpha=0.6,
-                    s=40,
-                    marker=source_style["marker"],
-                    edgecolors="black",
-                    linewidths=0.5,
-                    label=source_style["label"]
-                    if row_idx == 0 and col_idx == 0
-                    else "",
-                    zorder=5,
-                )
-
-                ax.scatter(
-                    target_2d[:, 0],
-                    target_2d[:, 1],
-                    color=target_style["color"],
-                    alpha=0.6,
-                    s=40,
-                    marker=target_style["marker"],
-                    edgecolors="black",
-                    linewidths=0.5,
-                    label=target_style["label"]
-                    if row_idx == 0 and col_idx == 0
-                    else "",
-                    zorder=5,
-                )
-
-            # Plot mean vectors
-            if not use_combined:
-                source_style = category_styles[source_type]
-                target_style = category_styles[target_type]
-
-                ax.quiver(
-                    0,
-                    0,
-                    source_mean_2d[0],
-                    source_mean_2d[1],
-                    color=source_style["color"],
-                    label=f"{source_style['label']} Mean"
-                    if row_idx == 0 and col_idx == 0
-                    else "",
-                    scale_units="xy",
-                    scale=1,  # Smaller scale makes arrows larger
-                    width=0.02,  # Thicker arrow
-                    headwidth=8,  # Larger head width
-                    headlength=10,  # Larger head length
-                    alpha=1.0,
-                    zorder=20,  # Higher zorder to draw above other elements
-                )
-
-                ax.quiver(
-                    0,
-                    0,
-                    target_mean_2d[0],
-                    target_mean_2d[1],
-                    color=target_style["color"],
-                    label=f"{target_style['label']} Mean"
-                    if row_idx == 0 and col_idx == 0
-                    else "",
-                    scale_units="xy",
-                    scale=1,  # Smaller scale makes arrows larger
-                    width=0.02,  # Thicker arrow
-                    headwidth=8,  # Larger head width
-                    headlength=10,  # Larger head length
-                    alpha=1.0,
-                    zorder=20,  # Higher zorder to draw above other elements
-                )
-            else:
-                # For combined case, just use general labels
-                ax.quiver(
-                    0,
-                    0,
-                    source_mean_2d[0],
-                    source_mean_2d[1],
-                    color="#880000",  # Dark red for combined source
-                    label="Combined Source Mean"
-                    if row_idx == 0 and col_idx == 0
-                    else "",
-                    scale_units="xy",
-                    scale=1,  # Smaller scale makes arrows larger
-                    width=0.02,  # Thicker arrow
-                    headwidth=8,  # Larger head width
-                    headlength=10,  # Larger head length
-                    alpha=1.0,
-                    zorder=20,  # Higher zorder to draw above other elements
-                )
-
-                ax.quiver(
-                    0,
-                    0,
-                    target_mean_2d[0],
-                    target_mean_2d[1],
-                    color="#000088",  # Dark blue for combined target
-                    label="Combined Target Mean"
-                    if row_idx == 0 and col_idx == 0
-                    else "",
-                    scale_units="xy",
-                    scale=1,  # Smaller scale makes arrows larger
-                    width=0.02,  # Thicker arrow
-                    headwidth=8,  # Larger head width
-                    headlength=10,  # Larger head length
-                    alpha=1.0,
-                    zorder=20,  # Higher zorder to draw above other elements
-                )
-
-            # Plot steering vector
-            ax.quiver(
-                0,
-                0,
-                steering_vector_2d[0],
-                steering_vector_2d[1],
-                color=steering_color,
-                label="Steering Vector" if row_idx == 0 and col_idx == 0 else "",
-                scale_units="xy",
-                scale=1,  # Smaller scale makes arrows larger
-                width=0.02,  # Thicker arrow
-                headwidth=8,  # Larger head width
-                headlength=10,  # Larger head length
-                alpha=1.0,
-                zorder=21,  # Higher zorder to draw above other elements
-            )
-
-            # Set axis limits
-            x_min, x_max = np.min(data_2d[:, 0]), np.max(data_2d[:, 0])
-            y_min, y_max = np.min(data_2d[:, 1]), np.max(data_2d[:, 1])
-            x_margin = (x_max - x_min) * 0.1
-            y_margin = (y_max - y_min) * 0.1
-            ax.set_xlim(x_min - x_margin, x_max + x_margin)
-            ax.set_ylim(y_min - y_margin, y_max + y_margin)
-
-            # Add labels
-            if row_idx == len(strategies) - 1:
-                ax.set_xlabel("PC 1")
-            if col_idx == 0:
-                ax.set_ylabel("PC 2")
-
-            # Add row and column headers
-            if col_idx == 0:
-                # Add strategy labels on the left side
-                ax.text(
-                    -0.3,
-                    0.5,
-                    strategy.capitalize(),
-                    transform=ax.transAxes,
-                    va="center",
-                    ha="right",
-                    fontsize=14,
-                    fontweight="bold",
-                    rotation=90,
-                )
-
-            if row_idx == 0:
-                # Add transformation labels on top
-                title = transformation_titles[trans_name]
-                ax.set_title(title, fontsize=12)
-
-            # Only show legend for the top-left plot
-            if row_idx == 0 and col_idx == 0:
-                ax.legend(loc="upper left", fontsize=8, bbox_to_anchor=(1.05, 1))
-
-            ax.grid(True, alpha=0.3)
-
-    # Add overall title
-    fig.suptitle(f"Steering Vectors - Layer {layer_idx} (All Strategies)", fontsize=16)
-
-    # Add descriptive text
-    fig.text(
-        0.5,
-        0.01,
-        "Red circles: Hate statements with 'Yes', Blue circles: Hate statements with 'No'\n"
-        "Blue triangles: Safe statements with 'Yes', Red triangles: Safe statements with 'No'\n"
-        "Arrows show the steering direction between content types.",
-        ha="center",
-        fontsize=9,
-        bbox=dict(boxstyle="round", facecolor="white", alpha=0.8),
-    )
-
-    # Adjust layout
-    plt.tight_layout(rect=(0, 0.05, 1, 0.95))
-
-    # Save the figure
-    output_path = os.path.join(
-        plot_dir, f"layer_{layer_idx}_all_strategies_all_steering_vectors.png"
-    )
-    plt.savefig(output_path, dpi=300, bbox_inches="tight")
-    plt.close(fig)
-
-    print(f"Saved comprehensive steering vector plot to {output_path}")
-    return output_path
+    return results, all_layer_data, all_strategy_data, all_steering_vectors

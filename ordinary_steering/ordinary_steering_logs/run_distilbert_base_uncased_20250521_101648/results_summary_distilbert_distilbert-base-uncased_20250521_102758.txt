@@ -1,0 +1,51 @@
+
+================================================================================
+EXPERIMENT RESULTS SUMMARY
+================================================================================
+
+MODEL INFORMATION
+----------------------------------------
+Model Name: DistilBertModel
+Model Family: distilbert
+Model Variant: distilbert-base-uncased
+Number of Layers: 6
+Steering Coefficients: [0.5, 1.0, 2.0, 5.0]
+
+Class_separability Statistics
+----------------------------------------
+Mean: 0.0007
+Std: 0.0006
+Min: 0.0000
+Max: 0.0018
+Median: 0.0006
+Q1: 0.0003
+Q3: 0.0010
+
+Subspace_separation Statistics
+----------------------------------------
+Mean: 0.5279
+Std: 0.0097
+Min: 0.5168
+Max: 0.5475
+Median: 0.5251
+Q1: 0.5230
+Q3: 0.5293
+
+Subspace_variance Statistics
+----------------------------------------
+Mean: 0.0435
+Std: 0.0191
+Min: 0.0066
+Max: 0.0695
+Median: 0.0466
+Q1: 0.0397
+Q3: 0.0524
+
+LAYER-WISE RESULTS
+--------------------------------------------------------------------------------
+No layer-wise results available
+
+GENERATED PLOTS
+----------------------------------------
+Performance Accuracy: plots/performance_accuracy.png
+
