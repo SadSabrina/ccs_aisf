@@ -6,7 +6,7 @@ import numpy as np
 import copy
 import random
 
-from sklearn.metrics import silhouette_score, accuracy_score
+from sklearn.metrics import silhouette_score, accuracy_score, precision_score, recall_score
 from sklearn.linear_model import LogisticRegression
 
 
@@ -67,6 +67,9 @@ class CCS(object):
 
     def __init__(self, x0, x1, y_train=None, nepochs=1500, ntries=10, lr=0.015, batch_size=-1,
                  device=None, linear=True, weight_decay=0.01, var_normalize=False, lambda_classification=0.0):
+        if device is None:
+            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")  
+            self.device = device
         
         self.var_normalize = var_normalize
         self.x0 = self.normalize(x0)
@@ -92,7 +95,7 @@ class CCS(object):
             self.probe = nn.Sequential(nn.Linear(self.d, 1), nn.Sigmoid())
         else:
             self.probe = MLPProbe(self.d)
-        self.probe.to(self.device)
+        self.probe.to(self.device).to(dtype=torch.float32)
 
     def normalize(self, x):
         x = x - x.mean(axis=0, keepdims=True)
@@ -125,7 +128,7 @@ class CCS(object):
         return informative_loss + consistent_loss
 
 
-    def predict(self, x0_test, x1_test, y_test):
+    def predict(self, x0_test, x1_test):
         x0 = torch.tensor(self.normalize(x0_test), dtype=torch.float32, device=self.device)
         x1 = torch.tensor(self.normalize(x1_test), dtype=torch.float32, device=self.device)
         with torch.no_grad():
@@ -137,15 +140,24 @@ class CCS(object):
 
     def get_acc(self, x0_test, x1_test, y_test):
   
-        predictions, _ = self.predict(x0_test, x1_test, y_test)
+        predictions, _ = self.predict(x0_test, x1_test)
         acc = (predictions == y_test).mean()
 
         return max(acc, 1 - acc)
+    
+    # def get_pr_rec(self, x0_test, x1_test, y_test):
+    #     _, probas = self.predict(x0_test, x1_test, y_test)
 
-    def get_silhouette(self, x0_test, x1_test, y_test):
+    #     precision = precision_score(y_true=y_test, y_pred=probas)
+    #     recall = recall_score(y_true=y_test, y_pred=probas)
 
-        predictions, _ = self.predict(x0_test, x1_test, y_test)
-        s_score = silhouette_score(x1_test - x0_test, predictions, metric='cosine')
+    #     return precision, recall
+
+
+    def get_silhouette(self, x0_test, x1_test):
+
+        predictions, _ = self.predict(x0_test, x1_test)
+        s_score = 0 if len(np.unique(predictions)) == 1 else silhouette_score(x1_test - x0_test, predictions, metric='cosine')
         return s_score
 
     def get_contrastive_probas(self, xA0_test, xA1_test, x_notA0_test, x_notA1_test):
@@ -158,8 +170,8 @@ class CCS(object):
         
         with torch.no_grad():
 
-          pA0, pA1 = self.best_probe(xA0_test).detach().numpy(), self.best_probe(xA1_test).detach().numpy()
-          p_notA0, p_notA1 = self.best_probe(x_notA0_test).detach().numpy(), self.best_probe(x_notA1_test).detach().numpy()
+          pA0, pA1 = self.best_probe(xA0_test).detach().cpu().numpy(), self.best_probe(xA1_test).detach().cpu().numpy()
+          p_notA0, p_notA1 = self.best_probe(x_notA0_test).detach().cpu().numpy(), self.best_probe(x_notA1_test).detach().cpu().numpy()
 
         return pA0, pA1, p_notA0, p_notA1
 
@@ -178,6 +190,9 @@ class CCS(object):
         return ci
 
     def get_ideal_distance(self, xA0_test, xA1_test, x_notA0_test, x_notA1_test):
+        
+        # A — not harmful/real statement
+        # notA — harmful/ideal statement
 
         pA0, pA1, p_notA0, p_notA1 = self.get_contrastive_probas(xA0_test, xA1_test, x_notA0_test, x_notA1_test)
 
@@ -195,19 +210,22 @@ class CCS(object):
             if y_tensor.ndim == 1:
                 y_tensor = y_tensor.view(-1, 1)
 
+        self.probe = self.probe.to(self.device).to(torch.float32)
         optimizer = optim.AdamW(self.probe.parameters(), lr=self.lr, weight_decay=self.weight_decay)
 
         for epoch in range(self.nepochs):
-            permutation = torch.randperm(len(x0))
+            permutation = torch.randperm(len(x0), device=self.device)
             x0, x1 = x0[permutation], x1[permutation]
 
             if self.lambda_classification != 0 and self.y_train is not None:
                 y_tensor = y_tensor[permutation]
 
             for j in range(nbatches):
-                x0_batch = x0[j * batch_size:(j + 1) * batch_size]
-                x1_batch = x1[j * batch_size:(j + 1) * batch_size]
+                x0_batch = x0[j * batch_size:(j + 1) * batch_size].to(self.device).to(torch.float32)
+                x1_batch = x1[j * batch_size:(j + 1) * batch_size].to(self.device).to(torch.float32)
                 y_batch = y_tensor[j * batch_size:(j + 1) * batch_size] if self.lambda_classification !=0 and self.y_train is not None else None
+                if y_batch is not None:
+                    y_batch = y_batch.to(self.device).to(torch.float32)
 
                 p0, p1 = self.probe(x0_batch), self.probe(x1_batch)
                 loss = self.get_loss(p0, p1, y_batch)
@@ -217,6 +235,24 @@ class CCS(object):
                 optimizer.step()
 
         return loss.detach().cpu().item()
+    
+    def get_weights(self):
+        """
+        Returns the learned weights and bias of the linear probe.
+        Only works if linear=True.
+        Returns:
+            weight: numpy array of shape (d,)
+            bias: float
+        """
+        if not self.linear:
+            raise ValueError("Weights can only be extracted from linear probes.")
+
+        linear_layer = self.best_probe[0]  # nn.Linear layer
+        weight = linear_layer.weight.detach().cpu().numpy().squeeze()  # shape: (1, d) -> (d,)
+        bias = linear_layer.bias.detach().cpu().numpy().item()
+
+        return weight, bias
+
 
     def repeated_train(self):
       
@@ -294,7 +330,7 @@ def train_lr_on_hidden_states(X_pos, X_neg, y_vec, train_idx, test_idx, random_s
     return results
 
 def train_ccs_on_hidden_states(X_pos, X_neg, y_vec, train_idx, 
-                               test_idx, random_state=71, lambda_classification=0.0, normalize=True):
+                               test_idx, random_state=71, lambda_classification=0.0, normalize=True, device=None):
     """
     Train CCS for each layer and get results 
 
@@ -330,18 +366,18 @@ def train_ccs_on_hidden_states(X_pos, X_neg, y_vec, train_idx,
     for layer_idx in range(n_layers):
 
         # X positive (yes)
-        X_pos_train_layer = X_pos[train_idx, layer_idx, :]# (train_samples, hidden_dim)
-        X_pos_test_layer = X_pos[test_idx, layer_idx, :]
+        X_pos_train_layer = X_pos[train_idx, layer_idx, :].astype(np.float32) # (train_samples, hidden_dim)
+        X_pos_test_layer = X_pos[test_idx, layer_idx, :].astype(np.float32)
 
         # X negative (no)
-        X_neg_train_layer = X_neg[train_idx, layer_idx, :]
-        X_neg_test_layer = X_neg[test_idx, layer_idx, :]
+        X_neg_train_layer = X_neg[train_idx, layer_idx, :].astype(np.float32)
+        X_neg_test_layer = X_neg[test_idx, layer_idx, :].astype(np.float32)
 
         # y vector
-        y_train = y_vec[train_idx]
-        y_test = y_vec[test_idx]
+        y_train = y_vec[train_idx].astype(np.float32)
+        y_test = y_vec[test_idx].astype(np.float32)
 
-        ccs = CCS(X_neg_train_layer, X_pos_train_layer, y_train.values, var_normalize=False, lambda_classification=lambda_classification)
+        ccs = CCS(X_neg_train_layer, X_pos_train_layer, y_train.values, var_normalize=False, lambda_classification=lambda_classification, device=device)
         ccs.repeated_train()
 
         # Оценка
@@ -352,10 +388,12 @@ def train_ccs_on_hidden_states(X_pos, X_neg, y_vec, train_idx,
           s_score = ccs.get_silhouette(X_neg_test_layer, X_pos_test_layer, y_test.values)
         ccs_acc = ccs.get_acc(X_neg_test_layer, X_pos_test_layer, y_test.values)
 
+       # ccs_precision, ccs_recall = ccs.get_pr_rec(X_neg_test_layer, X_pos_test_layer, y_test.values)
+
         print(f"Layer {layer_idx+1}/{n_layers}, CCS accuracy: {ccs_acc}")
 
         # Probas
-        A_idx = test_idx[test_idx <= 514/2]
+        A_idx = test_idx[test_idx <= len(X_pos)/2]
         notA_idx = (A_idx + n_samples/2).astype(int)
 
         A0_test = X_neg[A_idx, layer_idx, :]
@@ -370,6 +408,8 @@ def train_ccs_on_hidden_states(X_pos, X_neg, y_vec, train_idx,
 
         # Save result
         results[layer_idx] = {'accuracy': ccs_acc,
+                            #   'precision': ccs_precision,
+                            #   'recall' : ccs_recall,
                               'silhouette' : s_score,
                               'agreement' : ccs_agreement,
                               'contradiction idx' : ccs_ci,
