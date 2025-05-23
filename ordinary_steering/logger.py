@@ -102,9 +102,14 @@ def print_results_summary(
         os.makedirs(plots_dir, exist_ok=True)
         print(f"Saving plots and results to {plots_dir}")
 
+    # Handle the case where results is a tuple (from train_ccs_with_steering)
+    if isinstance(results, tuple) and len(results) >= 1:
+        # Extract the first element (actual results list) from the tuple
+        results = results[0]
+
     # Convert list to dict if results is a list
     results_dict = {}
-    if isinstance(results, list):
+    if isinstance(results, (list, tuple)):
         for i, layer_result in enumerate(results):
             if "layer_idx" in layer_result:
                 results_dict[layer_result["layer_idx"]] = layer_result
@@ -149,9 +154,9 @@ def print_results_summary(
         "class_separability": [],
         "subspace_separation": [],
         "subspace_variance": [],
+        "subspace_analysis": [],
     }
 
-    # Collect all metrics across layers and coefficients
     for layer_idx, layer_data in results_dict.items():
         # Convert layer_idx to int if it's a string
         if isinstance(layer_idx, str) and layer_idx.isdigit():
@@ -199,6 +204,13 @@ def print_results_summary(
 
     # Create detailed layer-wise summary
     layer_summary = []
+    # Ensure results_dict is always a dictionary
+    if not isinstance(results_dict, dict):
+        print(
+            f"Warning: results_dict is not a dictionary for layer summary. Type: {type(results_dict)}"
+        )
+        results_dict = {}  # Use empty dict as fallback
+
     for layer_idx, layer_data in results_dict.items():
         # Convert layer_idx to int if it's a string
         if isinstance(layer_idx, str) and layer_idx.isdigit():

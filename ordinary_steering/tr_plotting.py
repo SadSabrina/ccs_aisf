@@ -21,142 +21,108 @@ CUSTOM_PALETTE = {
 
 
 def plot_performance_across_layers(results, metric="accuracy", save_path=None):
-    """Plot performance metrics across layers.
+    """
+    Plot performance metrics across model layers.
 
     Args:
-        results: List of dictionaries containing layer results, or dictionary with layer indices as keys
-        metric: Metric to plot ('accuracy', 'auc', or 'silhouette')
-        save_path: Path to save the plot.
-        Example: "plots/performance_accuracy.png"
+        results: List of results per layer
+        metric: Metric to plot (e.g., "accuracy", "loss")
+        save_path: Path to save the plot
     """
-    # Determine the structure of results and extract layer indices
-    if isinstance(results, list):
-        # Check if results is a list of dictionaries or something else
-        if results and isinstance(results[0], dict) and "layer_idx" in results[0]:
-            # Original case: List of dictionaries with layer_idx key
-            layers = [r["layer_idx"] for r in results]
+    plt.figure(figsize=(10, 6))
 
-            # Get baseline metrics with fallback if base_metrics doesn't exist
-            baseline_metrics = []
-            for r in results:
-                if "final_metrics" in r and r["final_metrics"]:
-                    if "base_metrics" in r["final_metrics"]:
-                        baseline_metrics.append(
-                            r["final_metrics"]["base_metrics"].get(metric, None)
-                        )
-                    else:
-                        # Fallback to direct metric if base_metrics doesn't exist
-                        baseline_metrics.append(r["final_metrics"].get(metric, None))
-                else:
-                    baseline_metrics.append(None)
+    # Extract data
+    layers = []
+    baseline_values = []
+    coef_values = {}
 
-            # Get metrics for each steering coefficient
-            steering_coefs = [0.0, 0.5, 1.0, 2.0, 5.0]
-            coef_metrics = {coef: [] for coef in steering_coefs}
+    # Find all coefficients in the data
+    all_coefficients = set()
+    for layer_result in results:
+        for key in layer_result.keys():
+            if key.startswith("coef_"):
+                coef = key.split("_")[1]
+                all_coefficients.add(coef)
 
-            for r in results:
-                for coef in steering_coefs:
-                    coef_str = f"coef_{coef}"
-                    if coef_str in r and metric in r[coef_str]:
-                        coef_metrics[coef].append(r[coef_str][metric])
-                    else:
-                        coef_metrics[coef].append(None)
+    # Sort coefficients to ensure consistent order
+    all_coefficients = sorted(all_coefficients, key=lambda x: float(x))
+
+    for layer_result in results:
+        layer_idx = layer_result["layer_idx"]
+        layers.append(layer_idx)
+
+        # Get baseline values (coefficient = 0.0)
+        if (
+            "final_metrics" in layer_result
+            and "base_metrics" in layer_result["final_metrics"]
+        ):
+            if metric in layer_result["final_metrics"]["base_metrics"]:
+                baseline_values.append(
+                    layer_result["final_metrics"]["base_metrics"][metric]
+                )
+            else:
+                baseline_values.append(None)
         else:
-            # Case: results is a list but not of dictionaries with layer_idx
-            # Assume the indices are sequential layer numbers
-            layers = list(range(len(results)))
+            baseline_values.append(None)
 
-            # If results is a list of values, use those directly
-            if all(not isinstance(r, dict) for r in results):
-                baseline_metrics = results
-                coef_metrics = {0.0: baseline_metrics}
-                steering_coefs = [0.0]
+        # Get values for each coefficient
+        for coef in all_coefficients:
+            if f"coef_{coef}" not in coef_values:
+                coef_values[f"coef_{coef}"] = []
+
+            if (
+                f"coef_{coef}" in layer_result
+                and metric in layer_result[f"coef_{coef}"]
+            ):
+                coef_values[f"coef_{coef}"].append(layer_result[f"coef_{coef}"][metric])
             else:
-                # Try to extract metrics in a more general way
-                baseline_metrics = []
-                for r in results:
-                    if isinstance(r, dict) and "final_metrics" in r:
-                        if "base_metrics" in r["final_metrics"]:
-                            baseline_metrics.append(
-                                r["final_metrics"]["base_metrics"].get(metric, None)
-                            )
-                        else:
-                            # Fallback to direct metric if base_metrics doesn't exist
-                            baseline_metrics.append(
-                                r["final_metrics"].get(metric, None)
-                            )
-                    else:
-                        baseline_metrics.append(None)
+                coef_values[f"coef_{coef}"].append(None)
 
-                # Get metrics for each steering coefficient
-                steering_coefs = [0.0, 0.5, 1.0, 2.0, 5.0]
-                coef_metrics = {coef: [] for coef in steering_coefs}
-
-                for r in results:
-                    for coef in steering_coefs:
-                        coef_str = f"coef_{coef}"
-                        if (
-                            isinstance(r, dict)
-                            and coef_str in r
-                            and metric in r[coef_str]
-                        ):
-                            coef_metrics[coef].append(r[coef_str][metric])
-                        else:
-                            coef_metrics[coef].append(None)
-    elif isinstance(results, dict):
-        # Case: results is a dictionary with layer indices as keys
-        layers = sorted(list(results.keys()))
-
-        # Try to extract baseline metrics
-        baseline_metrics = []
-        for layer in layers:
-            r = results[layer]
-            if isinstance(r, dict) and "final_metrics" in r:
-                if "base_metrics" in r["final_metrics"]:
-                    baseline_metrics.append(
-                        r["final_metrics"]["base_metrics"].get(metric, None)
-                    )
-                else:
-                    # Fallback to direct metric if base_metrics doesn't exist
-                    baseline_metrics.append(r["final_metrics"].get(metric, None))
-            else:
-                baseline_metrics.append(None)
-
-        # Get metrics for each steering coefficient
-        steering_coefs = [0.0, 0.5, 1.0, 2.0, 5.0]
-        coef_metrics = {coef: [] for coef in steering_coefs}
-
-        for layer in layers:
-            r = results[layer]
-            for coef in steering_coefs:
-                coef_str = f"coef_{coef}"
-                if isinstance(r, dict) and coef_str in r and metric in r[coef_str]:
-                    coef_metrics[coef].append(r[coef_str][metric])
-                else:
-                    coef_metrics[coef].append(None)
-    else:
-        # Not a structure we can handle
-        raise ValueError(
-            f"Unexpected results type: {type(results)}. Expected list or dict."
+    # Plot baseline if available
+    if any(v is not None for v in baseline_values):
+        plt.plot(
+            layers,
+            baseline_values,
+            marker="o",
+            linestyle="-",
+            color="black",
+            label="Baseline",
         )
 
-    plt.figure(figsize=(12, 6))
+    # Plot values for each coefficient with different colors
+    colors = ["red", "green", "blue", "orange", "purple", "cyan"]
+    for i, (coef_key, values) in enumerate(coef_values.items()):
+        if any(v is not None for v in values):
+            color_idx = i % len(colors)
+            coef = coef_key.split("_")[1]
+            plt.plot(
+                layers,
+                values,
+                marker="o",
+                linestyle="-",
+                color=colors[color_idx],
+                label=f"Coef={coef}",
+            )
 
-    # Plot baseline
-    plt.plot(layers, baseline_metrics, "k--", label="Baseline")
+    # Add title and labels
+    coef_list = ", ".join([c for c in all_coefficients])
+    plt.title(
+        f"{metric.capitalize()} Across Layers\nSteering Coefficients: {coef_list}",
+        fontsize=14,
+    )
+    plt.xlabel("Layer", fontsize=12)
+    plt.ylabel(metric.capitalize(), fontsize=12)
+    plt.grid(True, linestyle="--", alpha=0.7)
+    plt.legend(fontsize=10)
 
-    # Plot steering coefficients
-    for coef in steering_coefs:
-        plt.plot(layers, coef_metrics[coef], label=f"Coef={coef}")
+    # Set x-axis to show integer ticks
+    plt.xticks(layers)
 
-    plt.xlabel("Layer")
-    plt.ylabel(metric.capitalize())
-    plt.title(f"{metric.capitalize()} Across Layers")
-    plt.legend()
-    plt.grid(True)
-
+    # Save the plot if a path is provided
     if save_path:
-        plt.savefig(save_path)
+        os.makedirs(os.path.dirname(save_path), exist_ok=True)
+        plt.tight_layout()
+        plt.savefig(save_path, dpi=200)
         plt.close()
     else:
         plt.show()
@@ -169,6 +135,9 @@ def plot_all_layer_vectors(results, save_dir):
         results: List of layer results
         save_dir: Directory to save the plot.
         The plot will be saved as "{save_dir}/all_layer_vectors.png"
+
+    Returns:
+        Path to the saved plot or None if unsuccessful
     """
 
     import matplotlib.pyplot as plt
@@ -178,7 +147,7 @@ def plot_all_layer_vectors(results, save_dir):
     # Check if results is valid
     if not results:
         print("Error: No results provided")
-        return
+        return None
 
     # Filter valid results with all required keys
     valid_results = []
@@ -205,7 +174,7 @@ def plot_all_layer_vectors(results, save_dir):
     # Check if we have any valid results
     if not valid_results:
         print("Error: No valid layer data found. Cannot create plot.")
-        return
+        return None
 
     # Create grid layout
     n_layers = len(valid_results)
@@ -278,6 +247,29 @@ def plot_all_layer_vectors(results, save_dir):
         safe_mean = safe_mean[:min_dim]
         steering = steering[:min_dim]
 
+        # Check for NaN or Inf values
+        if (
+            np.isnan(hate_mean).any()
+            or np.isnan(safe_mean).any()
+            or np.isnan(steering).any()
+        ):
+            print(f"Error: NaN values detected in vectors for layer {i}")
+            axes[i].text(0.5, 0.5, "NaN values in vectors", ha="center", va="center")
+            axes[i].set_title(f"Layer {i}")
+            continue
+
+        if (
+            np.isinf(hate_mean).any()
+            or np.isinf(safe_mean).any()
+            or np.isinf(steering).any()
+        ):
+            print(f"Error: Infinite values detected in vectors for layer {i}")
+            axes[i].text(
+                0.5, 0.5, "Infinite values in vectors", ha="center", va="center"
+            )
+            axes[i].set_title(f"Layer {i}")
+            continue
+
         # Stack for PCA
         vectors = np.vstack([hate_mean, safe_mean, steering])
 
@@ -299,74 +291,110 @@ def plot_all_layer_vectors(results, save_dir):
             axes[i].set_title(f"Layer {i}")
             continue
 
+        # Check if data has sufficient variance
+        if np.all(np.abs(np.std(vectors_norm, axis=0)) < 1e-6):
+            print(f"Error: Insufficient variance in data for layer {i}")
+            axes[i].text(0.5, 0.5, "Insufficient variance", ha="center", va="center")
+            axes[i].set_title(f"Layer {i}")
+            continue
+
+        # Perform PCA - if it fails, handle it gracefully without try-except
+        if not np.all(np.isfinite(vectors_norm)):
+            print(f"Error: Non-finite values after normalization for layer {i}")
+            axes[i].text(
+                0.5,
+                0.5,
+                "Non-finite values after normalization",
+                ha="center",
+                va="center",
+            )
+            axes[i].set_title(f"Layer {i}")
+            continue
+
+        # Run PCA
         pca = PCA(n_components=2, svd_solver="full")
         vectors_2d = pca.fit_transform(vectors_norm)
 
+        # Check if PCA output is valid
+        if not np.all(np.isfinite(vectors_2d)):
+            print(f"Error: PCA produced non-finite values for layer {i}")
+            axes[i].text(
+                0.5, 0.5, "PCA produced non-finite values", ha="center", va="center"
+            )
+            axes[i].set_title(f"Layer {i}")
+            continue
+
+        # Plot the vectors
         ax = axes[i]
-        ax.quiver(
-            0,
-            0,
+        for idx, (label, color) in enumerate(
+            zip(
+                ["Hate Mean", "Safe Mean", "Steering Vector"],
+                ["#FF0000", "#0000FF", "#00FF00"],
+            )
+        ):
+            ax.scatter(
+                vectors_2d[idx, 0],
+                vectors_2d[idx, 1],
+                c=color,
+                s=100,
+                label=label,
+                alpha=0.8,
+            )
+            ax.text(
+                vectors_2d[idx, 0],
+                vectors_2d[idx, 1],
+                label,
+                fontsize=10,
+                ha="center",
+                va="bottom",
+            )
+
+        # Add arrows to show direction
+        ax.arrow(
             vectors_2d[0, 0],
             vectors_2d[0, 1],
-            color="#FF0000",
-            label="Hate Mean",
-            scale_units="xy",
-            scale=1,
-            width=0.015,
-            headwidth=5,
-            headlength=7,
-            zorder=50,
-        )
-        ax.quiver(
-            0,
-            0,
-            vectors_2d[1, 0],
-            vectors_2d[1, 1],
-            color="#0000FF",
-            label="Safe Mean",
-            scale_units="xy",
-            scale=1,
-            width=0.015,
-            headwidth=5,
-            headlength=7,
-            zorder=50,
-        )
-        ax.quiver(
-            0,
-            0,
-            vectors_2d[2, 0],
-            vectors_2d[2, 1],
-            color="#00FF00",
-            label="Steering Vector",
-            scale_units="xy",
-            scale=1,
-            width=0.015,
-            headwidth=5,
-            headlength=7,
-            zorder=50,
+            vectors_2d[2, 0] * 0.8,
+            vectors_2d[2, 1] * 0.8,
+            head_width=0.05,
+            head_length=0.1,
+            fc="#00FF00",
+            ec="#00FF00",
+            alpha=0.6,
         )
 
-        # Set limits to see vectors clearly
-        ax.set_xlim(-1.5, 1.5)
-        ax.set_ylim(-1.5, 1.5)
-        ax.set_title(f"Layer {i}")
-        ax.grid(True)
-        if i == 0:
-            ax.legend()
+        # Set title and legend
+        ax.set_title(f"Layer {layer_data.get('layer_idx', i)}")
+        ax.legend()
+        ax.grid(True, linestyle="--", alpha=0.7)
 
-    # Hide unused subplots
-    for j in range(n_layers, len(axes)):
-        axes[j].axis("off")
+    # Hide empty subplots
+    for i in range(len(valid_results), len(axes)):
+        axes[i].set_visible(False)
 
-    plt.tight_layout()
-    plt.savefig(
-        os.path.join(save_dir, "all_layer_vectors.png"), dpi=300, bbox_inches="tight"
-    )
+    # Set overall title
+    plt.suptitle("Layer Vector Representations", fontsize=16)
+    plt.tight_layout(rect=(0, 0, 1, 0.96))  # Adjust for suptitle
+
+    # Save figure
+    os.makedirs(save_dir, exist_ok=True)
+    save_path = os.path.join(save_dir, "all_layer_vectors.png")
+    plt.savefig(save_path, dpi=200, bbox_inches="tight")
     plt.close()
+
+    print(f"Saved layer vectors plot to {save_path}")
+    return save_path
 
 
 def visualize_decision_boundary(
-    ccs, hate_vectors, safe_vectors, steering_vector, log_base=None
+    ccs,
+    hate_vectors,
+    safe_vectors,
+    steering_vector,
+    log_base=None,
+    layer_idx=None,
+    strategy=None,
+    steering_coefficient=None,
+    pair_type=None,
 ):
     """Visualize the decision boundary of the CCS probe in the steering vector direction.
 
@@ -376,10 +404,21 @@ def visualize_decision_boundary(
         safe_vectors: Vectors for safe content
         steering_vector: The calculated steering vector
         log_base: Base path for saving the plot.
-        Example: "plots/decision_boundary_layer_0" (will save as "plots/decision_boundary_layer_0_decision_boundary.png")
+        layer_idx: Optional layer index for title
+        strategy: Optional embedding strategy (last-token, first-token, mean)
+        steering_coefficient: Optional steering coefficient value
+        pair_type: Optional data pair type (e.g., hate_yes_to_safe_yes)
     """
     # Create figure and axes
     fig, ax = plt.subplots(figsize=(12, 10))
+
+    # Make sure inputs are numpy arrays for plotting
+    if isinstance(hate_vectors, torch.Tensor):
+        hate_vectors = hate_vectors.detach().cpu().numpy()
+    if isinstance(safe_vectors, torch.Tensor):
+        safe_vectors = safe_vectors.detach().cpu().numpy()
+    if isinstance(steering_vector, torch.Tensor):
+        steering_vector = steering_vector.detach().cpu().numpy()
 
     # Ensure arrays are float32
     hate_vectors = hate_vectors.astype(np.float32)
@@ -464,8 +503,7 @@ def visualize_decision_boundary(
     grid_preds = grid_preds.reshape(xx.shape)
     grid_confidences = grid_confidences.reshape(xx.shape)
 
-    # Plot decision boundary with higher contrast and clearer boundaries
-    # Use alpha=0.6 instead of 0.3 for better visibility
+    # Plot decision boundary with higher contrast
     contour_fill = ax.contourf(
         xx, yy, grid_preds, alpha=0.6, cmap="RdBu_r", levels=np.linspace(0, 1, 11)
     )
@@ -497,14 +535,16 @@ def visualize_decision_boundary(
             edgecolor=edge_color,
             s=70,
             alpha=0.85,
-            label="Hate" if label == 0 else "Safe",
+            label="Hate (hate_yes + safe_no)"
+            if label == 0
+            else "Safe (safe_yes + hate_no)",
         )
 
     # Add steering vector direction
     ax.arrow(
         0,
         0,
-        1,
+        -1,
         0,
         color="black",
         width=0.01,
@@ -514,44 +554,86 @@ def visualize_decision_boundary(
         label="Steering Direction",
     )
 
-    ax.set_xlabel("Steering Vector Direction")
-    ax.set_ylabel("Orthogonal Direction")
-    ax.set_title("CCS Probe Decision Boundary in Steering Space")
-    ax.legend(loc="upper right", fontsize=12)
+    # Build a more detailed title with all available information
+    title_parts = ["CCS Probe Decision Boundary"]
 
-    # Add descriptive text
-    text = """
-    Description: This plot shows the decision boundary of the CCS probe in the space defined by the steering vector and its orthogonal complement.
-    
+    if layer_idx is not None:
+        title_parts.append(f"Layer {layer_idx}")
+
+    if strategy is not None:
+        title_parts.append(f"Strategy: {strategy}")
+
+    if steering_coefficient is not None:
+        title_parts.append(f"Coef: {steering_coefficient}")
+
+    if pair_type is not None:
+        title_parts.append(f"Pair: {pair_type}")
+
+    # Join all parts with pipes
+    title = " | ".join(title_parts)
+    plt.title(title, fontsize=14)
+
+    # Add axis labels
+    plt.xlabel("Steering Direction", fontsize=12)
+    plt.ylabel("Orthogonal Direction", fontsize=12)
+
+    # Add legend
+    plt.legend(fontsize=10)
+
+    # Add grid for better readability
+    plt.grid(True, alpha=0.3)
+
+    # Add description box explaining the plot
+    description = """Description: This plot shows the decision boundary of the CCS probe in the space defined by the steering vector and its orthogonal complement.
+
+    Data Categories:
+    - Red points (Hate): Combined category of hate_yes (hate speech with "Yes") and safe_no (safe speech with "No")
+    - Blue points (Safe): Combined category of safe_yes (safe speech with "Yes") and hate_no (hate speech with "No")
+
     Ideal Case:
     - Clear separation between hate (red) and safe (blue) content
     - Decision boundary should be roughly perpendicular to the steering direction
     - Points should cluster into two distinct groups
-    
+
     Interpretation:
     - The steering vector direction (horizontal axis) shows how content changes when steered
     - The orthogonal direction (vertical axis) shows variations that preserve the steering effect
     - The decision boundary (colored regions) shows where the probe switches between hate and safe predictions
     - A clear boundary indicates the probe can reliably distinguish between content types
+
+    Note: The steering vector points from hate to safe direction because it's calculated as safe_mean - hate_mean.
+    When applying positive steering coefficients, content moves in this direction (toward safe classification).
     """
 
-    fig.text(
+    # Add text box with description
+    plt.figtext(
         0.5,
         0.01,
-        text,
+        description,
         ha="center",
         va="bottom",
-        bbox=dict(facecolor="white", alpha=0.8, edgecolor="gray"),
+        fontsize=10,
+        bbox=dict(boxstyle="round,pad=0.5", facecolor="white", alpha=0.8),
         wrap=True,
     )
 
-    # Adjust layout to make room for text
-    plt.tight_layout(rect=(0, 0.15, 1, 1))
+    # Adjust layout to make room for description
+    plt.tight_layout(rect=(0, 0.15, 1, 0.95))
 
+    # Save figure if log_base is provided
     if log_base:
-        plt.savefig(f"{log_base}_decision_boundary.png", dpi=300, bbox_inches="tight")
+        if pair_type:
+            filename = f"{log_base}_{pair_type}"
+            if steering_coefficient is not None:
+                filename += f"_coef_{steering_coefficient}"
+            filename += ".png"
+        else:
+            filename = f"{log_base}.png"
 
-    return fig
+        plt.savefig(filename, dpi=300, bbox_inches="tight")
+        plt.close()
+
+    return plt.gcf()
 
 
 def plot_all_decision_boundaries(layers_data, log_base=None):
@@ -745,15 +827,9 @@ def plot_all_decision_boundaries(layers_data, log_base=None):
         )
 
         with torch.no_grad():
-            try:
-                grid_preds = ccs.probe(grid_tensor).cpu().numpy()
-                # Reshape to match grid
-                Z = grid_preds.reshape(xx.shape)
-            except Exception as e:
-                print(f"Error in CCS prediction for layer {i}: {e}")
-                ax.text(0.5, 0.5, "Prediction error", ha="center", va="center")
-                ax.set_title(f"Layer {i}")
-                continue
+            grid_preds = ccs.probe(grid_tensor).cpu().numpy()
+            # Reshape to match grid
+            Z = grid_preds.reshape(xx.shape)
 
         # Plot decision boundary
         contour = ax.contourf(xx, yy, Z, cmap="RdBu", alpha=0.3)
@@ -811,13 +887,14 @@ def plot_all_decision_boundaries(layers_data, log_base=None):
     if log_base:
         if not os.path.exists(os.path.dirname(log_base)):
             os.makedirs(os.path.dirname(log_base), exist_ok=True)
-        plt.savefig(f"{log_base}.png", dpi=300, bbox_inches="tight")
-        print(f"Saved decision boundaries plot to {log_base}.png")
+        save_path = f"{log_base}.png"
+        plt.savefig(save_path, dpi=300, bbox_inches="tight")
+        print(f"Saved decision boundaries plot to {save_path}")
         plt.close()
+        return save_path
     else:
         plt.show()
-
-    return fig
+        return None
 
 
 def plot_vectors_all_strategies(
@@ -2327,6 +2404,9 @@ def visualize_detailed_decision_boundary(
     steering_vector,
     layer_idx,
     log_base=None,
+    strategy=None,
+    steering_coefficient=None,
+    pair_type=None,
 ):
     """Create a more detailed decision boundary visualization that separates the four data types.
 
@@ -2339,6 +2419,9 @@ def visualize_detailed_decision_boundary(
         steering_vector: The calculated steering vector
         layer_idx: Layer index for title
         log_base: Base path for saving the plot
+        strategy: Optional embedding strategy (last-token, first-token, mean)
+        steering_coefficient: Optional steering coefficient value
+        pair_type: Optional data pair type (e.g., hate_yes_to_safe_yes)
     """
     # Create figure and axes
     fig, ax = plt.subplots(figsize=(12, 10))
@@ -2484,7 +2567,7 @@ def visualize_detailed_decision_boundary(
     ax.arrow(
         0,
         0,
-        1,
+        -1,
         0,
         color="black",
         width=0.01,
@@ -2494,40 +2577,65 @@ def visualize_detailed_decision_boundary(
         label="Steering Direction",
     )
 
-    # Set axis labels and title
-    ax.set_xlabel("Steering Vector Direction")
-    ax.set_ylabel("Orthogonal Direction")
-    ax.set_title(f"Detailed CCS Decision Boundary (Layer {layer_idx})")
-    ax.legend(loc="upper right", fontsize=10)
+    # Build a more detailed title with all available information
+    title_parts = ["Detailed CCS Decision Boundary"]
 
-    # Add descriptive text
-    description = """
-    This plot shows a detailed view of the CCS probe decision boundary with four data types:
-    
-    - Hate Yes (red circles): Hate-labeled statements with positive answers
-    - Hate No (blue squares): Hate-labeled statements with negative answers
-    - Safe Yes (light blue triangles): Safe-labeled statements with positive answers
-    - Safe No (pink triangles): Safe-labeled statements with negative answers
-    
-    The colored background shows the model's predicted classification:
-    - Red regions: classified as hate content
-    - Blue regions: classified as safe content
-    
-    The dashed black line indicates the decision boundary (0.5 probability).
-    
-    An ideal boundary would:
-    1. Clearly separate hate and safe points
-    2. Run perpendicular to the steering direction
-    3. Show clustered points of the same type
+    title_parts.append(f"Layer {layer_idx}")
+
+    if strategy is not None:
+        title_parts.append(f"Strategy: {strategy}")
+
+    if steering_coefficient is not None:
+        title_parts.append(f"Coef: {steering_coefficient}")
+
+    if pair_type is not None:
+        title_parts.append(f"Pair: {pair_type}")
+
+    # Join all parts with pipes
+    title = " | ".join(title_parts)
+    plt.title(title, fontsize=14)
+
+    # Add axis labels
+    plt.xlabel("Steering Direction", fontsize=12)
+    plt.ylabel("Orthogonal Direction", fontsize=12)
+
+    # Add legend
+    plt.legend(fontsize=10)
+
+    # Add grid for better readability
+    plt.grid(True, alpha=0.3)
+
+    # Add description box explaining the plot
+    description = """Description: This plot shows the decision boundary of the CCS probe in the space defined by the steering vector and its orthogonal complement.
+
+    Data Categories:
+    - Red points (Hate): Combined category of hate_yes (hate speech with "Yes") and safe_no (safe speech with "No")
+    - Blue points (Safe): Combined category of safe_yes (safe speech with "Yes") and hate_no (hate speech with "No")
+
+    Ideal Case:
+    - Clear separation between hate (red) and safe (blue) content
+    - Decision boundary should be roughly perpendicular to the steering direction
+    - Points should cluster into two distinct groups
+
+    Interpretation:
+    - The steering vector direction (horizontal axis) shows how content changes when steered
+    - The orthogonal direction (vertical axis) shows variations that preserve the steering effect
+    - The decision boundary (colored regions) shows where the probe switches between hate and safe predictions
+    - A clear boundary indicates the probe can reliably distinguish between content types
+
+    Note: The steering vector points from hate to safe direction because it's calculated as safe_mean - hate_mean.
+    When applying positive steering coefficients, content moves in this direction (toward safe classification).
     """
 
-    fig.text(
+    # Add text box with description
+    plt.figtext(
         0.5,
         0.01,
         description,
         ha="center",
         va="bottom",
-        bbox=dict(facecolor="white", alpha=0.8, edgecolor="gray"),
+        fontsize=10,
+        bbox=dict(boxstyle="round,pad=0.5", facecolor="white", alpha=0.8),
         wrap=True,
     )
 

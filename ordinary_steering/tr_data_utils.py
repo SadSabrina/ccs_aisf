@@ -188,8 +188,25 @@ def extract_representation(
     model_type=None,
     use_decoder=False,
     device=None,
+    keep_on_gpu=True,
 ):
-    """Extract representation from model."""
+    """Extract representation from model.
+
+    Args:
+        model: The model to extract representations from
+        tokenizer: The tokenizer for the model
+        text: The text to extract representation for
+        layer_index: Index of the layer to extract from (None for last layer)
+        get_all_hs: Whether to return all hidden states
+        strategy: Strategy to use for extraction ('first-token', 'last-token', or 'mean')
+        model_type: Type of model (unused)
+        use_decoder: Whether to use decoder hidden states (for encoder-decoder models)
+        device: Device to use for computation
+        keep_on_gpu: Whether to keep the representation on GPU (True) or move to CPU (False)
+
+    Returns:
+        Representation tensor (on GPU if keep_on_gpu=True, otherwise on CPU as numpy array)
+    """
     if device is None:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -242,7 +259,11 @@ def extract_representation(
     logging.debug(f"Representation mean: {representation.mean().item():.4f}")
     logging.debug(f"Representation std: {representation.std().item():.4f}")
 
-    return representation.cpu().numpy()
+    # Return representation on GPU or as numpy array on CPU
+    if keep_on_gpu:
+        return representation
+    else:
+        return representation.cpu().numpy()
 
 
 class EnhancedHateSafeDataset(Dataset):

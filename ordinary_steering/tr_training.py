@@ -166,6 +166,7 @@ class CCS:
                     layer_index=self.layer_idx,
                     strategy="last-token",
                     device=self.device,
+                    keep_on_gpu=True,
                 )
                 hate_reps.append(rep)
             hate_reps = torch.tensor(np.stack(hate_reps), device=self.device)
@@ -180,6 +181,7 @@ class CCS:
                     layer_index=self.layer_idx,
                     strategy="last-token",
                     device=self.device,
+                    keep_on_gpu=True,
                 )
                 safe_reps.append(rep)
             safe_reps = torch.tensor(np.stack(safe_reps), device=self.device)
@@ -208,11 +210,11 @@ class CCS:
         """Predict directly from pre-computed vector representations.
 
         Args:
-            vector_data: numpy array of shape (batch_size, *) containing vector representations
+            vector_data: tensor or numpy array of shape (batch_size, *) containing vector representations
                         Will be reshaped to (batch_size, -1) for the model
 
         Returns:
-            Tuple of (predictions, confidences)
+            Tuple of (predictions, confidences) as numpy arrays
         """
         with torch.no_grad():
             # Convert numpy array to tensor if necessary
@@ -221,8 +223,8 @@ class CCS:
                     vector_data, device=self.device, dtype=torch.float32
                 )
             else:
-                # Make sure tensor has the right dtype
-                vector_data = vector_data.to(dtype=torch.float32)
+                # Make sure tensor is on the right device and has the right dtype
+                vector_data = vector_data.to(device=self.device, dtype=torch.float32)
 
             # Apply variance normalization if configured
             if self.var_normalize:
@@ -230,17 +232,21 @@ class CCS:
 
             # Flatten to 2D if needed
             if len(vector_data.shape) > 2:
-                vector_data = vector_data.view(vector_data.size(0), -1)
+                vector_data = vector_data.reshape(vector_data.size(0), -1)
 
             # Get logits and probabilities
             logits = self.probe(vector_data)
-            probs = F.softmax(logits, dim=1)
+            probs = torch.nn.functional.softmax(logits, dim=1)
 
             # Get predictions and confidence
             confidence = torch.max(probs, dim=1)[0]
             preds = torch.argmax(probs, dim=1)
 
-            return preds.cpu().numpy(), confidence.cpu().numpy()
+            # Ensure we return numpy arrays
+            preds_np = preds.cpu().numpy()
+            confidence_np = confidence.cpu().numpy()
+
+            return preds_np, confidence_np
 
     def get_acc(self, X_hate_test, X_safe_test, y_test):
         """Get accuracy for test data."""
@@ -269,6 +275,7 @@ class CCS:
                 layer_index=self.layer_idx,
                 strategy="last-token",
                 device=self.device,
+                keep_on_gpu=False,
             )
             hate_reps.append(rep)
 
@@ -280,29 +287,36 @@ class CCS:
                 layer_index=self.layer_idx,
                 strategy="last-token",
                 device=self.device,
+                keep_on_gpu=False,
             )
             safe_reps.append(rep)
 
-        hate_reps = np.stack(hate_reps)
-        safe_reps = np.stack(safe_reps)
+        # Stack tensors on GPU
+        if hate_reps and safe_reps:
+            hate_reps = torch.stack(hate_reps)
+            safe_reps = torch.stack(safe_reps)
 
-        # Get predictions
-        predictions, _ = self.predict(X_hate_test, X_safe_test)
+            # Get predictions
+            predictions, _ = self.predict(X_hate_test, X_safe_test)
 
-        # Match predictions length to y_test length
-        if len(predictions) > len(y_test):
-            predictions = predictions[: len(y_test)]
-        elif len(predictions) < len(y_test):
-            y_test = y_test[: len(predictions)]
+            # Match predictions length to y_test length
+            if len(predictions) > len(y_test):
+                predictions = predictions[: len(y_test)]
+            elif len(predictions) < len(y_test):
+                y_test = y_test[: len(predictions)]
 
-        # Calculate difference vectors
-        diffs = safe_reps - hate_reps
+            # Calculate difference vectors on GPU
+            diffs = safe_reps - hate_reps
 
-        # Compute silhouette score if we have more than one class in predictions
-        if len(np.unique(predictions)) > 1:
-            return silhouette_score(diffs, predictions, metric="cosine")
-        else:
-            return 0.0
+            # Need to move to CPU for silhouette score calculation
+            # since sklearn doesn't support GPU computation
+            diffs_cpu = diffs.cpu().numpy()
+
+            # Compute silhouette score if we have more than one class in predictions
+            if len(np.unique(predictions)) > 1:
+                return silhouette_score(diffs_cpu, predictions, metric="cosine")
+
+        return 0.0
 
     def train(
         self,
@@ -361,6 +375,7 @@ class CCS:
                         layer_index=self.layer_idx,
                         strategy="last-token",
                         device=self.device,
+                        keep_on_gpu=True,
                     )
                     hate_reps.append(rep)
 
@@ -373,12 +388,13 @@ class CCS:
                         layer_index=self.layer_idx,
                         strategy="last-token",
                         device=self.device,
+                        keep_on_gpu=True,
                     )
                     safe_reps.append(rep)
 
-                # Convert to tensors and normalize
-                hate_reps = torch.tensor(np.stack(hate_reps), device=self.device)
-                safe_reps = torch.tensor(np.stack(safe_reps), device=self.device)
+                # Stack tensors directly on GPU
+                hate_reps = torch.stack(hate_reps)
+                safe_reps = torch.stack(safe_reps)
                 hate_reps = self.normalize(hate_reps)
                 safe_reps = self.normalize(safe_reps)
 
@@ -445,6 +461,7 @@ class CCS:
                             layer_index=self.layer_idx,
                             strategy="last-token",
                             device=self.device,
+                            keep_on_gpu=True,
                         )
                         hate_reps.append(rep)
 
@@ -456,12 +473,13 @@ class CCS:
                             layer_index=self.layer_idx,
                             strategy="last-token",
                             device=self.device,
+                            keep_on_gpu=True,
                         )
                         safe_reps.append(rep)
 
-                    # Convert to tensors and normalize
-                    hate_reps = torch.tensor(np.stack(hate_reps), device=self.device)
-                    safe_reps = torch.tensor(np.stack(safe_reps), device=self.device)
+                    # Stack tensors directly on GPU
+                    hate_reps = torch.stack(hate_reps)
+                    safe_reps = torch.stack(safe_reps)
                     hate_reps = self.normalize(hate_reps)
                     safe_reps = self.normalize(safe_reps)
 
@@ -592,6 +610,7 @@ class CCS:
                         layer_index=self.layer_idx,
                         strategy="last-token",
                         device=self.device,
+                        keep_on_gpu=False,
                     )
                     hate_reps.append(rep)
 
@@ -603,12 +622,13 @@ class CCS:
                         layer_index=self.layer_idx,
                         strategy="last-token",
                         device=self.device,
+                        keep_on_gpu=False,
                     )
                     safe_reps.append(rep)
 
-                # Convert to tensors and normalize
-                hate_reps = torch.tensor(np.stack(hate_reps), device=self.device)
-                safe_reps = torch.tensor(np.stack(safe_reps), device=self.device)
+                # Stack tensors directly on GPU
+                hate_reps = torch.stack(hate_reps)
+                safe_reps = torch.stack(safe_reps)
                 hate_reps = self.normalize(hate_reps)
                 safe_reps = self.normalize(safe_reps)
 
@@ -713,7 +733,19 @@ def vectorize_df(
 
 
 def compute_steering_vector(hate_representation, safe_representation):
-    """Compute steering vector as the difference between hate and safe representations"""
+    """Compute steering vector as the difference between hate and safe representations
+
+    Args:
+        hate_representation: Tensor or array of hate representations
+        safe_representation: Tensor or array of safe representations
+
+    Returns:
+        Steering vector in the same format as input (PyTorch tensor or NumPy array)
+    """
+    # Check input type to determine operation mode
+    is_tensor = isinstance(hate_representation, torch.Tensor)
+    device = hate_representation.device if is_tensor else None
+
     # Log original shapes
     logging.info(
         f"compute_steering_vector: hate_representation shape={hate_representation.shape}"
@@ -724,28 +756,49 @@ def compute_steering_vector(hate_representation, safe_representation):
 
     # Reshape if needed (3D -> 2D)
     if len(hate_representation.shape) == 3:
-        hate_representation = hate_representation.reshape(
-            hate_representation.shape[0], -1
-        )
-        safe_representation = safe_representation.reshape(
-            safe_representation.shape[0], -1
-        )
+        if is_tensor:
+            hate_representation = hate_representation.reshape(
+                hate_representation.shape[0], -1
+            )
+            safe_representation = safe_representation.reshape(
+                safe_representation.shape[0], -1
+            )
+        else:
+            hate_representation = hate_representation.reshape(
+                hate_representation.shape[0], -1
+            )
+            safe_representation = safe_representation.reshape(
+                safe_representation.shape[0], -1
+            )
         logging.info(
             f"compute_steering_vector: reshaped hate_representation shape={hate_representation.shape}"
         )
 
     # Compute mean representations
-    hate_mean = np.mean(hate_representation, axis=0)
-    safe_mean = np.mean(safe_representation, axis=0)
+    if is_tensor:
+        hate_mean = torch.mean(hate_representation, dim=0)
+        safe_mean = torch.mean(safe_representation, dim=0)
 
-    # Log statistics
-    logging.info(f"compute_steering_vector: hate_mean shape={hate_mean.shape}")
-    logging.info(
-        f"compute_steering_vector: hate_representation mean={np.mean(hate_representation)}, std={np.std(hate_representation)}"
-    )
-    logging.info(
-        f"compute_steering_vector: safe_representation mean={np.mean(safe_representation)}, std={np.std(safe_representation)}"
-    )
+        # Log statistics
+        logging.info(f"compute_steering_vector: hate_mean shape={hate_mean.shape}")
+        logging.info(
+            f"compute_steering_vector: hate_representation mean={torch.mean(hate_representation).item()}, std={torch.std(hate_representation).item()}"
+        )
+        logging.info(
+            f"compute_steering_vector: safe_representation mean={torch.mean(safe_representation).item()}, std={torch.std(safe_representation).item()}"
+        )
+    else:
+        hate_mean = np.mean(hate_representation, axis=0)
+        safe_mean = np.mean(safe_representation, axis=0)
+
+        # Log statistics
+        logging.info(f"compute_steering_vector: hate_mean shape={hate_mean.shape}")
+        logging.info(
+            f"compute_steering_vector: hate_representation mean={np.mean(hate_representation)}, std={np.std(hate_representation)}"
+        )
+        logging.info(
+            f"compute_steering_vector: safe_representation mean={np.mean(safe_representation)}, std={np.std(safe_representation)}"
+        )
 
     # Compute steering vector (difference of means)
     steering_vector = safe_mean - hate_mean
@@ -757,8 +810,35 @@ def compute_steering_vector(hate_representation, safe_representation):
 
 
 def apply_steering_vector(representation, steering_vector, coefficient=1.0):
-    """Apply steering vector to a representation"""
-    return representation + coefficient * steering_vector
+    """Apply steering vector to a representation
+
+    Args:
+        representation: Tensor or array to modify
+        steering_vector: Steering vector to apply (same type as representation)
+        coefficient: Coefficient to scale the steering vector
+
+    Returns:
+        Modified representation in the same format as input
+    """
+    # Ensure coefficient is a scalar in the right format
+    if isinstance(representation, torch.Tensor):
+        # PyTorch tensors - keep on GPU
+        if not isinstance(steering_vector, torch.Tensor):
+            steering_vector = torch.tensor(
+                steering_vector,
+                device=representation.device,
+                dtype=representation.dtype,
+            )
+
+        # Handle coefficient as tensor
+        coef = torch.tensor(
+            coefficient, device=representation.device, dtype=representation.dtype
+        )
+
+        return representation + coef * steering_vector
+    else:
+        # NumPy arrays
+        return representation + coefficient * steering_vector
 
 
 def train_ccs_with_steering(
@@ -881,6 +961,37 @@ def train_ccs_with_steering(
         safe_yes_texts = train_dataloader.dataset.get_by_type("safe_yes")
         hate_no_texts = train_dataloader.dataset.get_by_type("hate_no")
 
+        # Validate text data
+        if (
+            not isinstance(hate_yes_texts, (list, np.ndarray))
+            or len(hate_yes_texts) == 0
+        ):
+            print(
+                f"Error: Invalid hate_yes_texts. Type: {type(hate_yes_texts)}, Length: 0"
+            )
+            continue
+
+        if not isinstance(safe_no_texts, (list, np.ndarray)) or len(safe_no_texts) == 0:
+            print(
+                f"Error: Invalid safe_no_texts. Type: {type(safe_no_texts)}, Length: 0"
+            )
+            continue
+
+        if (
+            not isinstance(safe_yes_texts, (list, np.ndarray))
+            or len(safe_yes_texts) == 0
+        ):
+            print(
+                f"Error: Invalid safe_yes_texts. Type: {type(safe_yes_texts)}, Length: 0"
+            )
+            continue
+
+        if not isinstance(hate_no_texts, (list, np.ndarray)) or len(hate_no_texts) == 0:
+            print(
+                f"Error: Invalid hate_no_texts. Type: {type(hate_no_texts)}, Length: 0"
+            )
+            continue
+
         print(
             f"Processing layer {layer_idx} - Using {len(hate_yes_texts)} hate_yes texts, "
             f"{len(safe_no_texts)} safe_no texts, {len(safe_yes_texts)} safe_yes texts, "
@@ -897,8 +1008,20 @@ def train_ccs_with_steering(
                 layer_index=layer_idx,
                 strategy="last-token",
                 device=device,
+                keep_on_gpu=False,  # Convert to numpy for now
             )
+            # Validate vector shape
+            if not isinstance(vector, np.ndarray):
+                print(f"Error: Invalid vector type: {type(vector)}")
+                continue
+
             hate_vectors_list.append(vector)
+
+        # Verify we got vectors
+        if len(hate_vectors_list) == 0:
+            print(f"Error: No valid hate vectors extracted for layer {layer_idx}")
+            continue
+
         hate_vectors = np.array(hate_vectors_list)
 
         # Process safe data (safe_yes + hate_no)
@@ -911,26 +1034,101 @@ def train_ccs_with_steering(
                 layer_index=layer_idx,
                 strategy="last-token",
                 device=device,
+                keep_on_gpu=False,  # Convert to numpy for now
             )
+            # Validate vector shape
+            if not isinstance(vector, np.ndarray):
+                print(f"Error: Invalid vector type: {type(vector)}")
+                continue
+
             safe_vectors_list.append(vector)
+
+        # Verify we got vectors
+        if len(safe_vectors_list) == 0:
+            print(f"Error: No valid safe vectors extracted for layer {layer_idx}")
+            continue
+
         safe_vectors = np.array(safe_vectors_list)
 
         # Calculate steering vector
         steering_vector = compute_steering_vector(hate_vectors, safe_vectors)
 
-        # Store data for visualization
+        # Validate steering vector
+        if not isinstance(steering_vector, np.ndarray):
+            print(
+                f"Error: Invalid steering vector type: {type(steering_vector)} for layer {layer_idx}"
+            )
+            continue
+
+        # Store data for visualization with proper validation
+        # Verify vectors are valid numpy arrays
+        if not isinstance(hate_vectors, np.ndarray) or not isinstance(
+            safe_vectors, np.ndarray
+        ):
+            print(
+                f"Layer {layer_idx}: Invalid vector types - skipping for visualization"
+            )
+            continue
+
+        if hate_vectors.size == 0 or safe_vectors.size == 0:
+            print(f"Layer {layer_idx}: Empty vectors - skipping for visualization")
+            continue
+
+        # Properly reshape vectors for calculation
+        hate_vectors_reshaped = hate_vectors.reshape(hate_vectors.shape[0], -1)
+        safe_vectors_reshaped = safe_vectors.reshape(safe_vectors.shape[0], -1)
+
+        # Check for NaN or Inf values - skip layer if found
+        if (
+            np.isnan(hate_vectors_reshaped).any()
+            or np.isnan(safe_vectors_reshaped).any()
+        ):
+            print(
+                f"Layer {layer_idx}: NaN values detected - skipping for visualization"
+            )
+            continue
+
+        if (
+            np.isinf(hate_vectors_reshaped).any()
+            or np.isinf(safe_vectors_reshaped).any()
+        ):
+            print(
+                f"Layer {layer_idx}: Infinite values detected - skipping for visualization"
+            )
+            continue
+
+        # Calculate mean vectors
+        hate_mean_vector = np.mean(hate_vectors_reshaped, axis=0)
+        safe_mean_vector = np.mean(safe_vectors_reshaped, axis=0)
+
+        # Validate calculated means
+        if np.isnan(hate_mean_vector).any() or np.isnan(safe_mean_vector).any():
+            print(
+                f"Layer {layer_idx}: NaN values in mean vectors - skipping for visualization"
+            )
+            continue
+
+        if np.isinf(hate_mean_vector).any() or np.isinf(safe_mean_vector).any():
+            print(
+                f"Layer {layer_idx}: Infinite values in mean vectors - skipping for visualization"
+            )
+            continue
+
+        # Debug information
+        print(
+            f"Layer {layer_idx} - Hate mean shape: {hate_mean_vector.shape}, Safe mean shape: {safe_mean_vector.shape}"
+        )
+        print(f"Layer {layer_idx} - Steering vector shape: {steering_vector.shape}")
+
+        # Store valid data
         layer_data = {
             "ccs": ccs,
             "layer_idx": layer_idx,
             "hate_vectors": hate_vectors,
             "safe_vectors": safe_vectors,
             "steering_vector": steering_vector,
-            "hate_mean_vector": np.mean(
-                hate_vectors.reshape(hate_vectors.shape[0], -1), axis=0
-            ),
-            "safe_mean_vector": np.mean(
-                safe_vectors.reshape(safe_vectors.shape[0], -1), axis=0
-            ),
+            "hate_mean_vector": hate_mean_vector,
+            "safe_mean_vector": safe_mean_vector,
         }
         all_layer_data.append(layer_data)
 
@@ -975,6 +1173,9 @@ def train_ccs_with_steering(
             safe_vectors=safe_vectors,
             steering_vector=steering_vector,
             log_base=os.path.join(plot_dir, f"layer_{layer_idx}"),
+            layer_idx=layer_idx,
+            strategy="last-token",  # Default strategy used for extraction
+            pair_type="combined",  # Default pair type
         )
         print(f"Generated decision boundary visualization for layer {layer_idx}")
 
@@ -1002,7 +1203,14 @@ def train_ccs_with_steering(
                     layer_index=layer_idx,
                     strategy=strategy,
                     device=device,
+                    keep_on_gpu=False,
                 )
+                # Validate representation
+                if not isinstance(rep, np.ndarray):
+                    print(
+                        f"Error: Invalid {strategy} representation for hate_yes. Type: {type(rep)}"
+                    )
+                    continue
                 hate_yes_vecs.append(rep)
 
             # Extract hate_no representations
@@ -1014,7 +1222,14 @@ def train_ccs_with_steering(
                     layer_index=layer_idx,
                     strategy=strategy,
                     device=device,
+                    keep_on_gpu=False,
                 )
+                # Validate representation
+                if not isinstance(rep, np.ndarray):
+                    print(
+                        f"Error: Invalid {strategy} representation for hate_no. Type: {type(rep)}"
+                    )
+                    continue
                 hate_no_vecs.append(rep)
 
             # Extract safe_yes representations
@@ -1026,7 +1241,14 @@ def train_ccs_with_steering(
                     layer_index=layer_idx,
                     strategy=strategy,
                     device=device,
+                    keep_on_gpu=False,
                 )
+                # Validate representation
+                if not isinstance(rep, np.ndarray):
+                    print(
+                        f"Error: Invalid {strategy} representation for safe_yes. Type: {type(rep)}"
+                    )
+                    continue
                 safe_yes_vecs.append(rep)
 
             # Extract safe_no representations
@@ -1038,14 +1260,45 @@ def train_ccs_with_steering(
                     layer_index=layer_idx,
                     strategy=strategy,
                     device=device,
+                    keep_on_gpu=False,
                 )
+                # Validate representation
+                if not isinstance(rep, np.ndarray):
+                    print(
+                        f"Error: Invalid {strategy} representation for safe_no. Type: {type(rep)}"
+                    )
+                    continue
                 safe_no_vecs.append(rep)
+
+            # Check if we have sufficient data
+            if (
+                len(hate_yes_vecs) == 0
+                or len(hate_no_vecs) == 0
+                or len(safe_yes_vecs) == 0
+                or len(safe_no_vecs) == 0
+            ):
+                print(f"Error: Insufficient data for strategy {strategy}. Skipping.")
+                continue
 
             # Convert to numpy arrays
             hate_yes_vecs = np.array(hate_yes_vecs)
             hate_no_vecs = np.array(hate_no_vecs)
             safe_yes_vecs = np.array(safe_yes_vecs)
             safe_no_vecs = np.array(safe_no_vecs)
+
+            # Check data shapes
+            if (
+                hate_yes_vecs.ndim < 2
+                or hate_no_vecs.ndim < 2
+                or safe_yes_vecs.ndim < 2
+                or safe_no_vecs.ndim < 2
+            ):
+                print(f"Error: Invalid dimensions in vectors for strategy {strategy}")
+                print(
+                    f"Shapes: hate_yes={hate_yes_vecs.shape}, hate_no={hate_no_vecs.shape}, "
+                    f"safe_yes={safe_yes_vecs.shape}, safe_no={safe_no_vecs.shape}"
+                )
+                continue
 
             # Store in layer strategy data
             layer_strategy_data[strategy] = {
@@ -1064,11 +1317,41 @@ def train_ccs_with_steering(
             # Combined steering vector
             combined_steering = compute_steering_vector(hate_vecs, safe_vecs)
 
+            # Validate steering vectors
+            if not isinstance(combined_steering, np.ndarray):
+                print(
+                    f"Error: Invalid combined steering vector for strategy {strategy}"
+                )
+                continue
+
             # Specific steering vectors
             hate_yes_to_safe_yes = compute_steering_vector(hate_yes_vecs, safe_yes_vecs)
+            if not isinstance(hate_yes_to_safe_yes, np.ndarray):
+                print(
+                    f"Error: Invalid hate_yes_to_safe_yes steering vector for strategy {strategy}"
+                )
+                continue
+
             safe_no_to_hate_no = compute_steering_vector(safe_no_vecs, hate_no_vecs)
+            if not isinstance(safe_no_to_hate_no, np.ndarray):
+                print(
+                    f"Error: Invalid safe_no_to_hate_no steering vector for strategy {strategy}"
+                )
+                continue
+
             hate_yes_to_hate_no = compute_steering_vector(hate_yes_vecs, hate_no_vecs)
+            if not isinstance(hate_yes_to_hate_no, np.ndarray):
+                print(
+                    f"Error: Invalid hate_yes_to_hate_no steering vector for strategy {strategy}"
+                )
+                continue
+
             safe_no_to_safe_yes = compute_steering_vector(safe_no_vecs, safe_yes_vecs)
+            if not isinstance(safe_no_to_safe_yes, np.ndarray):
+                print(
+                    f"Error: Invalid safe_no_to_safe_yes steering vector for strategy {strategy}"
+                )
+                continue
 
             # Store steering vectors
             if strategy not in all_steering_vectors:
@@ -1105,62 +1388,136 @@ def train_ccs_with_steering(
             }
 
         # Store strategy data for this layer
+        if len(layer_strategy_data) == 0:
+            print(
+                f"Warning: No valid strategy data for layer {layer_idx}. Skipping visualizations."
+            )
+            continue
+
         all_strategy_data[layer_idx] = layer_strategy_data
 
         # Create detailed decision boundary visualization with separated data types
         if layer_idx == 0 or layer_idx == n_layers - 1:  # For first and last layer
             strategy = "last-token"
-            hate_yes_vectors = layer_strategy_data[strategy]["hate_yes"]
-            hate_no_vectors = layer_strategy_data[strategy]["hate_no"]
-            safe_yes_vectors = layer_strategy_data[strategy]["safe_yes"]
-            safe_no_vectors = layer_strategy_data[strategy]["safe_no"]
 
-            visualize_detailed_decision_boundary(
-                ccs=ccs,
-                hate_yes_vectors=hate_yes_vectors,
-                hate_no_vectors=hate_no_vectors,
-                safe_yes_vectors=safe_yes_vectors,
-                safe_no_vectors=safe_no_vectors,
-                steering_vector=steering_vector,
-                layer_idx=layer_idx,
-                log_base=os.path.join(plot_dir, f"layer_{layer_idx}_detailed"),
-            )
-            print(
-                f"Generated detailed decision boundary visualization for layer {layer_idx}"
-            )
+            # Validate strategy data exists
+            if strategy not in layer_strategy_data:
+                print(
+                    f"Warning: 'last-token' strategy missing for layer {layer_idx}. Skipping detailed visualization."
+                )
+            else:
+                hate_yes_vectors = layer_strategy_data[strategy]["hate_yes"]
+                hate_no_vectors = layer_strategy_data[strategy]["hate_no"]
+                safe_yes_vectors = layer_strategy_data[strategy]["safe_yes"]
+                safe_no_vectors = layer_strategy_data[strategy]["safe_no"]
+
+                # Validate vectors
+                if (
+                    isinstance(hate_yes_vectors, np.ndarray)
+                    and isinstance(hate_no_vectors, np.ndarray)
+                    and isinstance(safe_yes_vectors, np.ndarray)
+                    and isinstance(safe_no_vectors, np.ndarray)
+                    and hate_yes_vectors.size > 0
+                    and hate_no_vectors.size > 0
+                    and safe_yes_vectors.size > 0
+                    and safe_no_vectors.size > 0
+                ):
+                    visualize_detailed_decision_boundary(
+                        ccs=ccs,
+                        hate_yes_vectors=hate_yes_vectors,
+                        hate_no_vectors=hate_no_vectors,
+                        safe_yes_vectors=safe_yes_vectors,
+                        safe_no_vectors=safe_no_vectors,
+                        steering_vector=steering_vector,
+                        layer_idx=layer_idx,
+                        log_base=os.path.join(plot_dir, f"layer_{layer_idx}_detailed"),
+                        strategy=strategy,
+                        pair_type="combined",
+                    )
+                    print(
+                        f"Generated detailed decision boundary visualization for layer {layer_idx}"
+                    )
+                else:
+                    print(
+                        f"Warning: Invalid vector data for layer {layer_idx} detailed visualization"
+                    )
 
         # Generate visualizations for layer-specific strategies
         # Plot vectors for all strategies
-        plot_vectors_all_strategies(
-            layer_idx=layer_idx,
-            all_strategy_data=layer_strategy_data,
-            current_strategy="last-token",
-            save_path=os.path.join(
-                plot_dir, f"layer_{layer_idx}_all_strategies_vectors.png"
-            ),
-            all_steering_vectors=all_steering_vectors["last-token"],
-        )
+        if "last-token" in all_steering_vectors:
+            plot_vectors_all_strategies(
+                layer_idx=layer_idx,
+                all_strategy_data=layer_strategy_data,
+                current_strategy="last-token",
+                save_path=os.path.join(
+                    plot_dir, f"layer_{layer_idx}_all_strategies_vectors.png"
+                ),
+                all_steering_vectors=all_steering_vectors["last-token"],
+            )
+        else:
+            print(
+                f"Warning: 'last-token' strategy missing in all_steering_vectors for layer {layer_idx}"
+            )
 
         # Plot individual steering vectors for each strategy
         for strategy in all_strategies:
+            # Validate strategy exists in both data structures
+            if strategy not in layer_strategy_data:
+                print(
+                    f"Warning: Strategy {strategy} missing in layer_strategy_data for layer {layer_idx}"
+                )
+                continue
+
+            if strategy not in all_steering_vectors:
+                print(
+                    f"Warning: Strategy {strategy} missing in all_steering_vectors for layer {layer_idx}"
+                )
+                continue
+
+            # Validate required data exists
+            strategy_data = layer_strategy_data[strategy]
+            if not all(
+                key in strategy_data
+                for key in ["hate_yes", "hate_no", "safe_yes", "safe_no"]
+            ):
+                print(
+                    f"Warning: Missing required keys in strategy_data for {strategy}, layer {layer_idx}"
+                )
+                continue
+
+            # Validate all required vectors
+            if (
+                not isinstance(strategy_data["hate_yes"], np.ndarray)
+                or not isinstance(strategy_data["hate_no"], np.ndarray)
+                or not isinstance(strategy_data["safe_yes"], np.ndarray)
+                or not isinstance(strategy_data["safe_no"], np.ndarray)
+            ):
+                print(
+                    f"Warning: Invalid vector types in strategy_data for {strategy}, layer {layer_idx}"
+                )
+                continue
+
             plot_individual_steering_vectors(
                 plot_dir=plot_dir,
                 layer_idx=layer_idx,
                 all_steering_vectors=all_steering_vectors[strategy],
-                hate_yes_vectors=layer_strategy_data[strategy]["hate_yes"],
-                safe_yes_vectors=layer_strategy_data[strategy]["safe_yes"],
-                hate_no_vectors=layer_strategy_data[strategy]["hate_no"],
-                safe_no_vectors=layer_strategy_data[strategy]["safe_no"],
+                hate_yes_vectors=strategy_data["hate_yes"],
+                safe_yes_vectors=strategy_data["safe_yes"],
+                hate_no_vectors=strategy_data["hate_no"],
+                safe_no_vectors=strategy_data["safe_no"],
                 strategy=strategy,
             )
 
         # Plot all strategies and steering vectors in a comprehensive visualization
-        plot_all_strategies_all_steering_vectors(
-            plot_dir=plot_dir,
-            layer_idx=layer_idx,
-            representations=layer_strategy_data,
-            all_steering_vectors_by_strategy=all_steering_vectors,
-        )
+        if all_steering_vectors:
+            plot_all_strategies_all_steering_vectors(
+                plot_dir=plot_dir,
+                layer_idx=layer_idx,
+                representations=layer_strategy_data,
+                all_steering_vectors_by_strategy=all_steering_vectors,
+            )
+        else:
+            print(f"Warning: No steering vectors for layer {layer_idx}")
 
         ############### ADDITIONAL METRICS CALCULATION ###############
         print(f"\nCalculating additional metrics for layer {layer_idx}...")
@@ -1226,41 +1583,272 @@ def train_ccs_with_steering(
                 f"Layer {layer_idx} - Max sensitivity at point: {fisher_info['max_sensitivity_point']:.4f}"
             )
 
+        # Calculate metrics for different steering coefficient values
+        print(
+            f"\nCalculating metrics for different steering coefficients for layer {layer_idx}..."
+        )
+        for coef in steering_coefficients:
+            coef_key = f"coef_{coef}"
+
+            # Special case for coefficient 0.0 - use baseline metrics
+            if coef == 0.0:
+                # Copy baseline metrics to coefficient data structure
+                layer_result[coef_key] = {
+                    "agreement_score": agreement,
+                    "contradiction_index": contradiction,
+                    "ideal_distance": ideal_distance,
+                    "representation_stability": stability,
+                }
+
+                # Add metrics from final_metrics too
+                if "final_metrics" in layer_result:
+                    final_metrics = layer_result["final_metrics"]
+                    if "base_metrics" in final_metrics:
+                        base_metrics = final_metrics["base_metrics"]
+                        for metric_name, metric_value in base_metrics.items():
+                            layer_result[coef_key][metric_name] = metric_value
+                    else:
+                        # Copy any metrics from final_metrics directly
+                        for metric_name, metric_value in final_metrics.items():
+                            if metric_name != "base_metrics":
+                                layer_result[coef_key][metric_name] = metric_value
+
+                print("  Coef=0.0 (baseline) - Using existing metrics")
+                continue
+
+            # Apply steering with this coefficient
+            steered_hate_vectors = apply_steering_vector(
+                representation=hate_vectors,
+                steering_vector=steering_vector,
+                coefficient=coef,
+            )
+
+            # Generate decision boundary plot for each coefficient (for key layers)
+            if (
+                layer_idx == 0
+                or layer_idx == n_layers - 1
+                or layer_idx == n_layers // 2
+            ):
+                visualize_decision_boundary(
+                    ccs=ccs,
+                    hate_vectors=steered_hate_vectors,  # Use steered vectors
+                    safe_vectors=safe_vectors,
+                    steering_vector=steering_vector,
+                    log_base=os.path.join(plot_dir, f"layer_{layer_idx}_coef_{coef}"),
+                    layer_idx=layer_idx,
+                    strategy="last-token",
+                    steering_coefficient=coef,
+                    pair_type="combined",
+                )
+                print(
+                    f"  Generated decision boundary for coefficient {coef}, layer {layer_idx}"
+                )
+
+            # Convert to tensor for predictions
+            steered_hate_tensor = torch.tensor(steered_hate_vectors, device=device)
+            safe_tensor = torch.tensor(safe_vectors, device=device)
+
+            # Get predictions
+            with torch.no_grad():
+                steered_hate_preds = ccs.probe(steered_hate_tensor).cpu().numpy()
+                safe_preds = ccs.probe(safe_tensor).cpu().numpy()
+
+                # Calculate metrics with steered representations
+                steered_agreement = float(
+                    np.mean(
+                        agreement_score(
+                            steered_hate_preds,
+                            safe_preds,
+                            safe_preds,
+                            steered_hate_preds,
+                        )
+                    )
+                )
+                steered_contradiction = float(
+                    np.mean(
+                        contradiction_index(
+                            steered_hate_preds,
+                            safe_preds,
+                            safe_preds,
+                            steered_hate_preds,
+                        )
+                    )
+                )
+                steered_ideal_distance = float(
+                    np.mean(
+                        ideal_representation_distance(
+                            steered_hate_preds,
+                            safe_preds,
+                            safe_preds,
+                            steered_hate_preds,
+                        )
+                    )
+                )
+
+                # Calculate stability on steered vectors
+                steered_stability = representation_stability(
+                    ccs,
+                    steered_hate_vectors,
+                    perturbation_scale=0.01,
+                    n_perturbations=5,
+                )
+
+                # Calculate accuracy and other standard metrics
+                # Create merged dataset with steered hate vectors and original safe vectors
+                steered_X = np.vstack([steered_hate_vectors, safe_vectors])
+                steered_y = np.concatenate(
+                    [np.zeros(len(steered_hate_vectors)), np.ones(len(safe_vectors))]
+                )
+
+                # Get predictions on steered data
+                steered_probs = (
+                    ccs.probe(torch.tensor(steered_X, device=device)).cpu().numpy()
+                )
+                steered_preds = (steered_probs > 0.5).astype(int)
+
+                # Calculate accuracy
+                steered_accuracy = float(np.mean(steered_preds.flatten() == steered_y))
+
+                # Calculate silhouette score if more than one class is present
+                if len(np.unique(steered_preds)) > 1:
+                    from sklearn.metrics import silhouette_score
+
+                    steered_silhouette = float(
+                        silhouette_score(steered_X, steered_preds)
+                    )
+                else:
+                    steered_silhouette = 0.0
+
+                # Store metrics for this coefficient
+                layer_result[coef_key] = {
+                    "agreement_score": steered_agreement,
+                    "contradiction_index": steered_contradiction,
+                    "ideal_distance": steered_ideal_distance,
+                    "representation_stability": steered_stability,
+                    "accuracy": steered_accuracy,
+                    "silhouette": steered_silhouette,
+                }
+
+                # Print key metrics
+                print(
+                    f"  Coef={coef} - Agreement: {steered_agreement:.4f}, Accuracy: {steered_accuracy:.4f}"
+                )
+
         # Store results
         results.append(layer_result)
 
     ############### CROSS-LAYER PLOTTING ###############
     print("\nGenerating visualizations for all layers...")
 
-    # 1. Plot all decision boundaries in a grid
-    plot_all_decision_boundaries(
-        layers_data=all_layer_data,
-        log_base=os.path.join(plot_dir, "all_decision_boundaries"),
-    )
-    print(
-        f"Saved all decision boundaries plot to {os.path.join(plot_dir, 'all_decision_boundaries.png')}"
-    )
+    # Validate results and all_layer_data before plotting
+    if not results:
+        print(
+            "Warning: No results collected. Cannot generate cross-layer visualizations."
+        )
+        return [], [], {}, {}
 
-    # 2. Generate individual decision boundary plots for each layer
-    for layer_idx, layer_data in enumerate(all_layer_data):
-        if layer_idx > 0:  # We already did layer 0 during training
-            decision_boundary_path = os.path.join(plot_dir, f"layer_{layer_idx}")
-            visualize_decision_boundary(
-                ccs=layer_data["ccs"],
-                hate_vectors=layer_data["hate_vectors"],
-                safe_vectors=layer_data["safe_vectors"],
-                steering_vector=layer_data["steering_vector"],
-                log_base=decision_boundary_path,
+    if not all_layer_data:
+        print(
+            "Warning: No layer data collected. Cannot generate layer-based visualizations."
+        )
+    else:
+        # 1. Plot all decision boundaries in a grid
+        plot_all_decision_boundaries(
+            layers_data=all_layer_data,
+            log_base=os.path.join(plot_dir, "all_decision_boundaries"),
+        )
+        print(
+            f"Saved all decision boundaries plot to {os.path.join(plot_dir, 'all_decision_boundaries.png')}"
+        )
+
+        # 2. Generate individual decision boundary plots for each layer
+        for layer_idx, layer_data in enumerate(all_layer_data):
+            # Validate required keys
+            required_keys = ["ccs", "hate_vectors", "safe_vectors", "steering_vector"]
+            if not all(key in layer_data for key in required_keys):
+                print(
+                    f"Warning: Missing required keys for decision boundary plot for layer {layer_idx}"
+                )
+                continue
+
+            # Validate data types
+            if not isinstance(layer_data["hate_vectors"], np.ndarray) or not isinstance(
+                layer_data["safe_vectors"], np.ndarray
+            ):
+                print(
+                    f"Warning: Invalid vector types for decision boundary plot for layer {layer_idx}"
+                )
+                continue
+
+            if layer_idx > 0:  # We already did layer 0 during training
+                decision_boundary_path = os.path.join(plot_dir, f"layer_{layer_idx}")
+                visualize_decision_boundary(
+                    ccs=layer_data["ccs"],
+                    hate_vectors=layer_data["hate_vectors"],
+                    safe_vectors=layer_data["safe_vectors"],
+                    steering_vector=layer_data["steering_vector"],
+                    log_base=decision_boundary_path,
+                    layer_idx=layer_idx,
+                    strategy="last-token",
+                )
+                print(f"Saved decision boundary plot for layer {layer_idx}")
+
+        # 3. Plot vectors across all layers
+        # Validate layer data has required keys for vector plotting
+        valid_vector_layers = []
+        for layer_idx, layer_data in enumerate(all_layer_data):
+            required_keys = ["hate_mean_vector", "safe_mean_vector", "steering_vector"]
+            if not all(key in layer_data for key in required_keys):
+                print(
+                    f"Warning: Missing required keys for vector plot for layer {layer_idx}"
+                )
+                continue
+
+            if (
+                not isinstance(layer_data["hate_mean_vector"], np.ndarray)
+                or not isinstance(layer_data["safe_mean_vector"], np.ndarray)
+                or not isinstance(layer_data["steering_vector"], np.ndarray)
+            ):
+                print(
+                    f"Warning: Invalid vector types for vector plot for layer {layer_idx}"
+                )
+                continue
+
+            valid_vector_layers.append(layer_data)
+
+        if valid_vector_layers:
+            plot_all_layer_vectors(results=valid_vector_layers, save_dir=plot_dir)
+            print(
+                f"Saved all layer vectors plot to {os.path.join(plot_dir, 'all_layer_vectors.png')}"
             )
-            print(f"Saved decision boundary plot for layer {layer_idx}")
-
-    # 3. Plot vectors across all layers
-    plot_all_layer_vectors(results=all_layer_data, save_dir=plot_dir)
-    print(
-        f"Saved all layer vectors plot to {os.path.join(plot_dir, 'all_layer_vectors.png')}"
-    )
+        else:
+            print("Warning: No valid layer data for vector plotting.")
 
     # 4. Plot performance metrics across layers
+    # Check if we have accuracy metrics in any of the coefficient data structures
+    has_accuracy = False
+
+    # First try checking coefficient data
+    if results:
+        # Look for accuracy in coef_0.0, coef_1.0, etc.
+        coef_keys = [k for k in results[0].keys() if k.startswith("coef_")]
+        if coef_keys:
+            # Check if any layer has accuracy metrics in coefficient data
+            has_accuracy = any(
+                "accuracy" in results[0][coef_key]
+                for coef_key in coef_keys
+                if isinstance(results[0][coef_key], dict)
+            )
+
+        # If not found in coefficient data, check the traditional location
+        if not has_accuracy:
+            has_accuracy = any(
+                "accuracy"
+                in layer_result.get("final_metrics", {}).get("base_metrics", {})
+                for layer_result in results
+            )
+
+    # Always generate the plot - our fixed plotting function will handle missing data gracefully
     metrics_plot_path = os.path.join(plot_dir, "performance_accuracy.png")
     plot_performance_across_layers(
         results=results, metric="accuracy", save_path=metrics_plot_path
@@ -1277,11 +1865,20 @@ def train_ccs_with_steering(
         "ideal_distance",
     ]
 
-    coef_sweep_path = os.path.join(plot_dir, "coefficient_sweep_comparison.png")
-    plot_coefficient_sweep_lines_comparison(
-        results=results, metrics=metrics_to_plot, save_path=coef_sweep_path
-    )
-    print(f"Saved coefficient sweep comparison plot to {coef_sweep_path}")
+    # Validate at least some metrics exist
+    available_metrics = []
+    for metric in metrics_to_plot:
+        if any(metric in layer_result for layer_result in results):
+            available_metrics.append(metric)
+
+    if available_metrics:
+        coef_sweep_path = os.path.join(plot_dir, "coefficient_sweep_comparison.png")
+        plot_coefficient_sweep_lines_comparison(
+            results=results, metrics=available_metrics, save_path=coef_sweep_path
+        )
+        print(f"Saved coefficient sweep comparison plot to {coef_sweep_path}")
+    else:
+        print("Warning: No metrics available for coefficient sweep plot.")
 
     ############### RESULTS SUMMARY ###############
     # Generate comprehensive results summary
