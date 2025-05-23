@@ -140,7 +140,7 @@ class CCS(object):
 
     def get_acc(self, x0_test, x1_test, y_test):
   
-        predictions, _ = self.predict(x0_test, x1_test, y_test)
+        predictions, _ = self.predict(x0_test, x1_test)
         acc = (predictions == y_test).mean()
 
         return max(acc, 1 - acc)
@@ -154,10 +154,10 @@ class CCS(object):
     #     return precision, recall
 
 
-    def get_silhouette(self, x0_test, x1_test, y_test):
+    def get_silhouette(self, x0_test, x1_test):
 
-        predictions, _ = self.predict(x0_test, x1_test, y_test)
-        s_score = silhouette_score(x1_test - x0_test, predictions, metric='cosine')
+        predictions, _ = self.predict(x0_test, x1_test)
+        s_score = 0 if len(np.unique(predictions)) == 1 else silhouette_score(x1_test - x0_test, predictions, metric='cosine')
         return s_score
 
     def get_contrastive_probas(self, xA0_test, xA1_test, x_notA0_test, x_notA1_test):
@@ -235,6 +235,24 @@ class CCS(object):
                 optimizer.step()
 
         return loss.detach().cpu().item()
+    
+    def get_weights(self):
+        """
+        Returns the learned weights and bias of the linear probe.
+        Only works if linear=True.
+        Returns:
+            weight: numpy array of shape (d,)
+            bias: float
+        """
+        if not self.linear:
+            raise ValueError("Weights can only be extracted from linear probes.")
+
+        linear_layer = self.best_probe[0]  # nn.Linear layer
+        weight = linear_layer.weight.detach().cpu().numpy().squeeze()  # shape: (1, d) -> (d,)
+        bias = linear_layer.bias.detach().cpu().numpy().item()
+
+        return weight, bias
+
 
     def repeated_train(self):
       
