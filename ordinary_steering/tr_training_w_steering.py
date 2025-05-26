@@ -1,6 +1,11 @@
 import logging
 import os
+import warnings
 from datetime import datetime
+
+# Suppress specific warnings from scikit-learn PCA
+warnings.filterwarnings("ignore", message="invalid value encountered in matmul")
+warnings.filterwarnings("ignore", message="divide by zero encountered in matmul")
 
 import matplotlib
 import numpy as np
@@ -16,8 +21,8 @@ from metrics_ordinary_steering import (
 )
 from tr_data_utils import (
     apply_steering_to_representations,
-    calculate_steering_vectors,
-    create_ccs_contrast_pairs,
+    calculate_steering_vectors_domain_preserving,
+    create_ccs_contrast_pairs_domain_preserving,
     evaluate_ccs_probe,
     extract_all_representations,
     train_ccs_probe,
@@ -181,8 +186,8 @@ def calculate_steering_vectors_for_all_strategies(representations):
                 # Get layer representations - this is Dict[data_type] -> numpy array
                 layer_representations = representations[strategy][layer_idx]
 
-                # Calculate steering vectors using existing function
-                layer_steering_vectors = calculate_steering_vectors(
+                # Calculate steering vectors using domain-preserving normalization
+                layer_steering_vectors = calculate_steering_vectors_domain_preserving(
                     layer_representations
                 )
                 steering_vectors[strategy][layer_idx] = layer_steering_vectors
@@ -267,8 +272,8 @@ def train_single_ccs_probe(
     else:
         steered_representations = representations
 
-    # Create CCS contrast pairs
-    correct_answers, incorrect_answers = create_ccs_contrast_pairs(
+    # Create CCS contrast pairs with domain-preserving normalization
+    correct_answers, incorrect_answers = create_ccs_contrast_pairs_domain_preserving(
         steered_representations
     )
 

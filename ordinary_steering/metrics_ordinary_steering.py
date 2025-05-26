@@ -1,3 +1,10 @@
+import warnings
+
+# Suppress specific warnings from scikit-learn PCA
+warnings.filterwarnings("ignore", message="invalid value encountered in matmul")
+warnings.filterwarnings("ignore", message="divide by zero encountered in matmul")
+
+
 def plot_coefficient_sweep_lines_comparison(results, metrics, save_path=None):
     """Plot multiple metrics across different steering coefficients.
 
@@ -28,10 +35,6 @@ def plot_coefficient_sweep_lines_comparison(results, metrics, save_path=None):
     print(
         f"Number of results: {len(results) if isinstance(results, list) else 'Not a list'}"
     )
-    if isinstance(results, list) and len(results) > 0:
-        print(
-            f"First result keys: {list(results[0].keys()) if isinstance(results[0], dict) else 'Not a dict'}"
-        )
 
     # Extract layer indices and prepare results based on the input type
     if isinstance(results, list):
@@ -106,21 +109,10 @@ def plot_coefficient_sweep_lines_comparison(results, metrics, save_path=None):
     for i, metric in enumerate(metrics):
         ax = axes[i]
 
-        print(f"Plotting metric: {metric}")
-
         # Get metrics for each steering coefficient
         for coef in steering_coefs:
             coef_str = f"coef_{coef}"
             metric_values = []
-
-            # Print debug information for the first layer
-            if results_list and isinstance(results_list[0], dict):
-                first_layer = results_list[0]
-                print(f"First layer keys: {list(first_layer.keys())}")
-                if coef_str in first_layer:
-                    print(
-                        f"coef_{coef} keys: {list(first_layer[coef_str].keys()) if isinstance(first_layer[coef_str], dict) else 'Not a dict'}"
-                    )
 
             for r in results_list:
                 # Try multiple ways to extract the metric
@@ -176,10 +168,6 @@ def plot_coefficient_sweep_lines_comparison(results, metrics, save_path=None):
                 metric_values_plot = [np.nan if v is None else v for v in metric_values]
                 ax.plot(layers, metric_values_plot, marker="o", label=f"Coef={coef}")
 
-                # Print debug info
-                print(
-                    f"Plotted {len(valid_values)} points for {metric} with coef={coef}"
-                )
             else:
                 print(f"Warning: No valid values found for {metric} with coef={coef}")
 

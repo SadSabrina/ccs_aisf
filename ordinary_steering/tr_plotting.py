@@ -1,4 +1,9 @@
 import os
+import warnings
+
+# Suppress specific warnings from scikit-learn PCA
+warnings.filterwarnings("ignore", message="invalid value encountered in matmul")
+warnings.filterwarnings("ignore", message="divide by zero encountered in matmul")
 
 import matplotlib.pyplot as plt
 import numpy as np

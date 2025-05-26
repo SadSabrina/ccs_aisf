@@ -351,7 +351,7 @@ def _combine_images_into_subplots(
         plt.savefig(output_file, dpi=200, bbox_inches="tight")
         plt.close()
 
-        print(f"Saved combined figure to {output_file}")
+        # print(f"Saved combined figure to {output_file}")
 
 
 def _identify_key_differences(metadata_list):

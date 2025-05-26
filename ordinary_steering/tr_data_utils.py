@@ -349,11 +349,12 @@ def extract_all_representations(
     return representations
 
 
-def calculate_steering_vectors(representations):
-    """Calculate steering vectors from representations with CCS normalization.
+def calculate_steering_vectors_domain_preserving(representations):
+    """Calculate steering vectors with domain-preserving normalization.
 
-    CHANGED: Added CCS-style normalization to remove Yes/No token bias
-    while preserving semantic content differences.
+    CHANGED: Instead of CCS normalization that removes domain differences,
+    we use a method that removes only Yes/No token bias while preserving
+    semantic differences between hate and safe content.
 
     Args:
         representations: Dictionary with keys hate_yes, hate_no, safe_yes, safe_no
@@ -373,37 +374,74 @@ def calculate_steering_vectors(representations):
         if representations[key].size == 0:
             raise ValueError(f"Representations[{key}] is empty")
 
-    # CHANGED: Apply CCS-style normalization to remove Yes/No token bias
-    print("Applying CCS-style normalization to remove Yes/No token bias...")
+    print("Applying domain-preserving normalization...")
 
-    # Separate "Yes" and "No" responses regardless of content type
-    yes_responses = np.vstack(
-        [representations["hate_yes"], representations["safe_yes"]]
+    # APPROACH 1: Remove the Yes/No bias while preserving content differences
+    # Calculate the pure Yes/No direction (independent of content)
+
+    # Get paired differences for the same content type
+    # For hate content: hate_yes - hate_no (pure Yes/No effect on hate)
+    # For safe content: safe_yes - safe_no (pure Yes/No effect on safe)
+    hate_yes_no_diff = representations["hate_yes"] - representations["hate_no"]
+    safe_yes_no_diff = representations["safe_yes"] - representations["safe_no"]
+
+    # The average difference represents the pure Yes/No token effect
+    # (should be similar for both hate and safe if it's just token bias)
+    yes_no_bias_vector = np.mean(
+        np.vstack([hate_yes_no_diff, safe_yes_no_diff]), axis=0
     )
-    no_responses = np.vstack([representations["hate_no"], representations["safe_no"]])
 
-    # Calculate means for Yes and No responses (captures token bias)
-    yes_mean = np.mean(yes_responses, axis=0, keepdims=True)
-    no_mean = np.mean(no_responses, axis=0, keepdims=True)
+    print(f"Yes/No bias vector norm: {np.linalg.norm(yes_no_bias_vector):.6f}")
 
-    print(f"Yes mean norm: {np.linalg.norm(yes_mean):.6f}")
-    print(f"No mean norm: {np.linalg.norm(no_mean):.6f}")
-    print(f"Yes-No difference norm: {np.linalg.norm(yes_mean - no_mean):.6f}")
+    # APPROACH 2: Project out the Yes/No bias from all representations
+    # Normalize the bias vector
+    yes_no_bias_norm = np.linalg.norm(yes_no_bias_vector)
+    if yes_no_bias_norm > 1e-10:
+        yes_no_unit_vector = yes_no_bias_vector / yes_no_bias_norm
 
-    # Apply normalization: subtract respective means to remove token bias
-    normalized_reps = {}
-    normalized_reps["hate_yes"] = representations["hate_yes"] - yes_mean
-    normalized_reps["safe_yes"] = representations["safe_yes"] - yes_mean
-    normalized_reps["hate_no"] = representations["hate_no"] - no_mean
-    normalized_reps["safe_no"] = representations["safe_no"] - no_mean
+        # Remove the Yes/No component from each representation
+        normalized_reps = {}
+        for key in required_keys:
+            # Project out the Yes/No bias: x_clean = x - (x · bias_unit) * bias_unit
+            projections = np.dot(representations[key], yes_no_unit_vector)
+            bias_component = (
+                projections[:, np.newaxis] * yes_no_unit_vector[np.newaxis, :]
+            )
+            normalized_reps[key] = representations[key] - bias_component
 
-    # Optional: Apply scale normalization as well (from CCS paper)
-    for key in normalized_reps:
-        std_val = np.std(normalized_reps[key], axis=0, keepdims=True) + 1e-8
-        normalized_reps[key] = normalized_reps[key] / std_val
+            print(
+                f"Removed Yes/No bias from {key}: "
+                f"mean projection = {np.mean(projections):.6f}"
+            )
+    else:
         print(
-            f"Normalized {key}: mean={np.mean(normalized_reps[key]):.6f}, std={np.std(normalized_reps[key]):.6f}"
+            "Warning: Yes/No bias vector has near-zero norm, using original representations"
         )
+        normalized_reps = representations.copy()
+
+    # Verify the bias removal worked
+    # Check that Yes/No differences are now minimized
+    new_hate_diff = np.mean(
+        normalized_reps["hate_yes"] - normalized_reps["hate_no"], axis=0
+    )
+    new_safe_diff = np.mean(
+        normalized_reps["safe_yes"] - normalized_reps["safe_no"], axis=0
+    )
+
+    print("After normalization:")
+    print(f"  Hate Yes-No difference norm: {np.linalg.norm(new_hate_diff):.6f}")
+    print(f"  Safe Yes-No difference norm: {np.linalg.norm(new_safe_diff):.6f}")
+
+    # Verify semantic differences are preserved
+    hate_mean = np.mean(
+        np.vstack([normalized_reps["hate_yes"], normalized_reps["hate_no"]]), axis=0
+    )
+    safe_mean = np.mean(
+        np.vstack([normalized_reps["safe_yes"], normalized_reps["safe_no"]]), axis=0
+    )
+    semantic_diff = safe_mean - hate_mean
+
+    print(f"  Preserved semantic difference norm: {np.linalg.norm(semantic_diff):.6f}")
 
     # Calculate mean vectors for each type using normalized data
     means = {}
@@ -469,25 +507,20 @@ def calculate_steering_vectors(representations):
         if norm > 1e-10:
             data["vector"] = vector / norm
             logging.info(
-                f"Calculated steering vector {name}: norm={norm:.6f} (after CCS normalization)"
+                f"Calculated steering vector {name}: norm={norm:.6f} (after domain-preserving normalization)"
             )
         else:
-            # If still near zero after CCS normalization, the data types may not be meaningfully different
+            # If still near zero, there may not be meaningful differences
             logging.warning(
-                f"Steering vector {name} has near-zero norm ({norm:.6f}) even after CCS normalization"
-            )
-            logging.warning(
-                "This suggests these data types may not contain meaningful differences in representation space"
+                f"Steering vector {name} has near-zero norm ({norm:.6f}) even after normalization"
             )
 
             # Add small epsilon to prevent zero norm error
             epsilon = 1e-8
             logging.warning(f"Adding epsilon {epsilon} to prevent zero norm error")
-            # Add random tiny noise to create a valid vector
             random_vec = np.random.randn(*vector.shape)
             random_vec = random_vec / np.linalg.norm(random_vec) * epsilon
             vector = vector + random_vec
-            # Normalize again
             norm = np.linalg.norm(vector)
             data["vector"] = vector / norm
             logging.info(f"New norm after adding epsilon: {norm:.6f}")
@@ -601,12 +634,11 @@ class EnhancedHateSafeDataset(Dataset):
             raise ValueError(f"Unknown data type: {data_type}")
 
 
-def create_ccs_contrast_pairs(representations):
+def create_ccs_contrast_pairs_domain_preserving(representations):
     """
-    Create contrast pairs for CCS training following the original paper methodology.
+    Create contrast pairs for CCS training with domain-preserving normalization.
 
-    CHANGED: CCS should learn to distinguish CORRECT vs INCORRECT answers,
-    not hate vs safe content.
+    CHANGED: Apply the domain-preserving normalization before creating contrast pairs.
 
     Args:
         representations: Dict with keys ['hate_yes', 'hate_no', 'safe_yes', 'safe_no']
@@ -614,13 +646,38 @@ def create_ccs_contrast_pairs(representations):
     Returns:
         tuple: (correct_representations, incorrect_representations)
     """
+    # First apply domain-preserving normalization
+    print("Applying domain-preserving normalization before CCS training...")
+
+    # Calculate the Yes/No bias vector
+    hate_yes_no_diff = representations["hate_yes"] - representations["hate_no"]
+    safe_yes_no_diff = representations["safe_yes"] - representations["safe_no"]
+    yes_no_bias_vector = np.mean(
+        np.vstack([hate_yes_no_diff, safe_yes_no_diff]), axis=0
+    )
+
+    # Project out the bias
+    yes_no_bias_norm = np.linalg.norm(yes_no_bias_vector)
+    if yes_no_bias_norm > 1e-10:
+        yes_no_unit_vector = yes_no_bias_vector / yes_no_bias_norm
+
+        normalized_reps = {}
+        for key in ["hate_yes", "hate_no", "safe_yes", "safe_no"]:
+            projections = np.dot(representations[key], yes_no_unit_vector)
+            bias_component = (
+                projections[:, np.newaxis] * yes_no_unit_vector[np.newaxis, :]
+            )
+            normalized_reps[key] = representations[key] - bias_component
+    else:
+        normalized_reps = representations.copy()
+
     # CORRECT ANSWERS (truthful responses):
     # - hate_yes: "Is this hate speech? Yes" when it IS hate speech ✓
     # - safe_no: "Is this hate speech? No" when it's NOT hate speech ✓
     correct_answers = np.vstack(
         [
-            representations["hate_yes"],  # Correctly identifying hate as hate
-            representations["safe_no"],  # Correctly identifying safe as safe
+            normalized_reps["hate_yes"],  # Correctly identifying hate as hate
+            normalized_reps["safe_no"],  # Correctly identifying safe as safe
         ]
     )
 
@@ -629,8 +686,8 @@ def create_ccs_contrast_pairs(representations):
     # - safe_yes: "Is this hate speech? Yes" when it's NOT hate speech ✗
     incorrect_answers = np.vstack(
         [
-            representations["hate_no"],  # Incorrectly saying hate is not hate
-            representations["safe_yes"],  # Incorrectly saying safe is hate
+            normalized_reps["hate_no"],  # Incorrectly saying hate is not hate
+            normalized_reps["safe_yes"],  # Incorrectly saying safe is hate
         ]
     )
 

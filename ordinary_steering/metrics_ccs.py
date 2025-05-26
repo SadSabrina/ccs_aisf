@@ -4,6 +4,12 @@ This file contains metrics specific to the CCS probe evaluation and analysis of
 internal model representations.
 """
 
+import warnings
+
+# Suppress specific warnings from scikit-learn PCA
+warnings.filterwarnings("ignore", message="invalid value encountered in matmul")
+warnings.filterwarnings("ignore", message="divide by zero encountered in matmul")
+
 import numpy as np
 import torch
 from sklearn.metrics import roc_auc_score, silhouette_score
