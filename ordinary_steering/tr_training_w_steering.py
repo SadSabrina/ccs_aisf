@@ -5,19 +5,41 @@ from datetime import datetime
 import matplotlib
 import numpy as np
 import torch
+from tqdm import tqdm
 
 # Set matplotlib backend to Agg (non-interactive)
 matplotlib.use("Agg")
 
 # Import modules
-from ordinary_steering_metrics import plot_coefficient_sweep_lines_comparison
+from metrics_ordinary_steering import (
+    plot_coefficient_sweep_lines_comparison,
+)
+from tr_data_utils import (
+    apply_steering_to_representations,
+    calculate_steering_vectors,
+    create_ccs_contrast_pairs,
+    evaluate_ccs_probe,
+    extract_all_representations,
+    train_ccs_probe,
+)
 from tr_plotting import (
     plot_all_decision_boundaries,
     plot_all_layer_vectors,
     plot_all_strategies_all_steering_vectors,
     plot_performance_across_layers,
-    visualize_decision_boundary,
 )
+
+
+# Custom class to handle plot data structure without type mismatch errors
+class PlotDataPoint:
+    def __init__(self, layer_idx):
+        self.data = {"layer_idx": layer_idx}
+
+    def __setitem__(self, key, value):
+        self.data[key] = value
+
+    def to_dict(self):
+        return self.data
 
 
 # Set up logging
@@ -45,6 +67,270 @@ if device.type == "cuda":
     torch.cuda.empty_cache()
 
 
+def extract_representations_for_all_strategies(
+    model,
+    tokenizer,
+    train_dataloader,
+    n_layers=12,
+    embedding_strategies=None,
+    device="cuda",
+):
+    """Extract representations for all strategies and layers with progress tracking.
+
+    CHANGED: Added comprehensive tqdm progress bars to track extraction progress.
+    """
+    if embedding_strategies is None:
+        embedding_strategies = ["last-token", "first-token", "mean"]
+
+    logger = logging.getLogger(__name__)
+    logger.info("Starting representation extraction for all strategies and layers")
+
+    # Get dataset
+    dataset = train_dataloader.dataset
+    if not hasattr(dataset, "get_by_type"):
+        raise ValueError("Dataset must have get_by_type method")
+
+    # Test that we can get data for all required types
+    required_types = ["hate_yes", "hate_no", "safe_yes", "safe_no"]
+    for data_type in required_types:
+        test_data = dataset.get_by_type(data_type)
+        if len(test_data) == 0:
+            raise ValueError(f"No data found for type {data_type}")
+        logger.info(f"Found {len(test_data)} samples for {data_type}")
+
+    representations = {}
+
+    # Overall progress: strategies × layers
+    total_extractions = len(embedding_strategies) * n_layers
+
+    with tqdm(
+        total=total_extractions,
+        desc="Extracting representations",
+        unit="strategy-layer",
+    ) as pbar:
+        # Extract for each strategy
+        for strategy_idx, strategy in enumerate(embedding_strategies):
+            logger.info(f"Extracting representations for strategy: {strategy}")
+            representations[strategy] = {}
+
+            # Extract for each layer with progress
+            for layer_idx in range(n_layers):
+                pbar.set_postfix(
+                    {
+                        "strategy": strategy,
+                        "layer": f"{layer_idx}/{n_layers-1}",
+                        "current": f"{strategy_idx+1}/{len(embedding_strategies)}",
+                    }
+                )
+
+                logger.info(f"Processing layer {layer_idx}")
+
+                # Extract representations using the existing function
+                layer_representations = extract_all_representations(
+                    model=model,
+                    tokenizer=tokenizer,
+                    dataset=dataset,
+                    layer_index=layer_idx,
+                    strategy=strategy,
+                    device=device,
+                    keep_on_gpu=False,  # Return as numpy arrays
+                )
+
+                # Store the layer representations
+                representations[strategy][layer_idx] = layer_representations
+
+                # Log shapes for verification
+                for data_type, data in layer_representations.items():
+                    logger.debug(
+                        f"Strategy {strategy}, Layer {layer_idx}, Type {data_type}: shape {data.shape}"
+                    )
+
+                pbar.update(1)
+
+    logger.info("Successfully extracted all representations")
+    return representations
+
+
+def calculate_steering_vectors_for_all_strategies(representations):
+    """Calculate steering vectors for all strategies and layers with progress tracking.
+
+    CHANGED: Added tqdm progress bars to track steering vector calculation.
+    """
+    logger = logging.getLogger(__name__)
+    logger.info("Calculating steering vectors for all strategies and layers")
+
+    steering_vectors = {}
+
+    # Count total operations
+    total_calculations = sum(
+        len(representations[strategy]) for strategy in representations
+    )
+
+    with tqdm(
+        total=total_calculations, desc="Calculating steering vectors", unit="layer"
+    ) as pbar:
+        for strategy in representations:
+            logger.info(f"Calculating steering vectors for strategy: {strategy}")
+            steering_vectors[strategy] = {}
+
+            for layer_idx in representations[strategy]:
+                pbar.set_postfix({"strategy": strategy, "layer": layer_idx})
+
+                logger.info(f"Processing layer {layer_idx}")
+
+                # Get layer representations - this is Dict[data_type] -> numpy array
+                layer_representations = representations[strategy][layer_idx]
+
+                # Calculate steering vectors using existing function
+                layer_steering_vectors = calculate_steering_vectors(
+                    layer_representations
+                )
+                steering_vectors[strategy][layer_idx] = layer_steering_vectors
+
+                # Log calculated vectors
+                for vector_type in layer_steering_vectors:
+                    vector_norm = np.linalg.norm(
+                        layer_steering_vectors[vector_type]["vector"]
+                    )
+                    logger.debug(
+                        f"Strategy {strategy}, Layer {layer_idx}, Vector {vector_type}: norm {vector_norm:.6f}"
+                    )
+
+                pbar.update(1)
+
+    logger.info("Successfully calculated all steering vectors")
+    return steering_vectors
+
+
+def train_single_ccs_probe(
+    representations,
+    pair_type,
+    steering_coefficient=0.0,
+    n_epochs=1000,
+    learning_rate=1e-3,
+    device="cuda",
+):
+    """Train a single CCS probe for given representations and pair type.
+
+    CHANGED: Now implements proper CCS training with correct contrast pairs
+    and applies steering before training.
+
+    Args:
+        representations: Dict[data_type] -> numpy array for a single layer
+        pair_type: Type of data pair (not used in new implementation)
+        steering_coefficient: Steering coefficient to apply
+        n_epochs: Number of training epochs
+        learning_rate: Learning rate for training
+        device: Device to use for training
+
+    Returns:
+        Dictionary with trained CCS model and metrics
+    """
+    logger = logging.getLogger(__name__)
+    logger.debug(f"Training CCS probe with steering coefficient {steering_coefficient}")
+
+    # Check we have all required data types
+    required_types = ["hate_yes", "hate_no", "safe_yes", "safe_no"]
+    for req_type in required_types:
+        if req_type not in representations:
+            raise ValueError(f"Missing required representation type: {req_type}")
+        if not isinstance(representations[req_type], np.ndarray):
+            raise ValueError(
+                f"representations[{req_type}] must be numpy array, got {type(representations[req_type])}"
+            )
+        if representations[req_type].size == 0:
+            raise ValueError(f"representations[{req_type}] is empty")
+
+    # Apply steering if coefficient > 0
+    if steering_coefficient > 0.0:
+        # Calculate steering vector (hate -> safe)
+        hate_mean = np.mean(
+            np.vstack([representations["hate_yes"], representations["hate_no"]]), axis=0
+        )
+        safe_mean = np.mean(
+            np.vstack([representations["safe_yes"], representations["safe_no"]]), axis=0
+        )
+        steering_vector = safe_mean - hate_mean
+        steering_norm = np.linalg.norm(steering_vector)
+
+        if steering_norm > 1e-10:
+            steering_vector = steering_vector / steering_norm
+            # Apply steering to representations
+            steered_representations = apply_steering_to_representations(
+                representations, steering_vector, steering_coefficient
+            )
+        else:
+            logger.warning(
+                f"Steering vector has near-zero norm ({steering_norm:.6f}), using original representations"
+            )
+            steered_representations = representations
+    else:
+        steered_representations = representations
+
+    # Create CCS contrast pairs
+    correct_answers, incorrect_answers = create_ccs_contrast_pairs(
+        steered_representations
+    )
+
+    # Train CCS probe
+    ccs_probe = train_ccs_probe(
+        correct_answers,
+        incorrect_answers,
+        n_epochs=n_epochs,
+        learning_rate=learning_rate,
+        device=device,
+    )
+
+    # Evaluate CCS probe
+    metrics = evaluate_ccs_probe(ccs_probe, correct_answers, incorrect_answers)
+
+    # Add steering-specific metrics
+    if steering_coefficient > 0.0:
+        # Calculate how much hate content has moved toward safe content
+        original_hate_mean = np.mean(
+            np.vstack([representations["hate_yes"], representations["hate_no"]]), axis=0
+        )
+        steered_hate_mean = np.mean(
+            np.vstack(
+                [
+                    steered_representations["hate_yes"],
+                    steered_representations["hate_no"],
+                ]
+            ),
+            axis=0,
+        )
+        safe_mean = np.mean(
+            np.vstack([representations["safe_yes"], representations["safe_no"]]), axis=0
+        )
+
+        # Similarity metrics
+        original_hate_safe_sim = np.dot(original_hate_mean, safe_mean) / (
+            np.linalg.norm(original_hate_mean) * np.linalg.norm(safe_mean)
+        )
+        steered_hate_safe_sim = np.dot(steered_hate_mean, safe_mean) / (
+            np.linalg.norm(steered_hate_mean) * np.linalg.norm(safe_mean)
+        )
+
+        metrics["steering_effect"] = {
+            "original_hate_safe_similarity": original_hate_safe_sim,
+            "steered_hate_safe_similarity": steered_hate_safe_sim,
+            "similarity_increase": steered_hate_safe_sim - original_hate_safe_sim,
+            "steering_coefficient": steering_coefficient,
+        }
+
+    result = {
+        "ccs": ccs_probe,
+        "metrics": metrics,
+        "pair_type": pair_type,
+        "steering_coefficient": steering_coefficient,
+    }
+
+    logger.debug(
+        f"CCS training completed - Accuracy: {metrics['accuracy']:.3f}, AUC: {metrics['auc']:.3f}"
+    )
+    return result
+
+
 def train_ccs_with_steering_strategies(
     model,
     tokenizer,
@@ -61,27 +347,7 @@ def train_ccs_with_steering_strategies(
 ):
     """Train CCS probes with steering applied before training.
 
-    This function differs from the original train_ccs_with_steering by:
-    1. Applying steering BEFORE training each CCS probe (not just during evaluation)
-    2. Training separate probes for each (layer, coefficient, strategy, data_pair) combination
-    3. Generating more detailed metrics and visualizations
-
-    Args:
-        model: Model to extract representations
-        tokenizer: Tokenizer for model
-        train_dataloader: DataLoader for training
-        val_dataloader: DataLoader for validation
-        test_dataloader: DataLoader for testing
-        run_dir: Directory to save results
-        n_layers: Number of layers to process
-        n_epochs: Number of epochs to train each CCS
-        learning_rate: Learning rate for training
-        device: Device to use
-        steering_coefficients: List of steering coefficients to use
-        embedding_strategies: List of embedding strategies to use
-
-    Returns:
-        Dictionary of results for all combinations
+    CHANGED: Added comprehensive progress tracking for the entire experiment.
     """
     logger = setup_logging(run_dir)
     logger.info("Starting training CCS probes with steering strategies")
@@ -110,23 +376,105 @@ def train_ccs_with_steering_strategies(
         ("safe_yes_to_safe_no", "Safe Yes → Safe No"),
     ]
 
-    # Create data structures to store results
+    print("\n🚀 PHASE 1: Extracting representations from model...")
+    # Extract all representations from the model
+    representations = extract_representations_for_all_strategies(
+        model=model,
+        tokenizer=tokenizer,
+        train_dataloader=train_dataloader,
+        n_layers=n_layers,
+        embedding_strategies=embedding_strategies,
+        device=device,
+    )
+
+    print("\n📐 PHASE 2: Calculating steering vectors...")
+    # Calculate all steering vectors
+    steering_vectors = calculate_steering_vectors_for_all_strategies(representations)
+
+    print("\n🧠 PHASE 3: Training CCS probes for all combinations...")
+    # Train CCS probes for all combinations
     all_results = {}
-    for strategy in embedding_strategies:
-        all_results[strategy] = {}
-        for pair_name, _ in data_pair_types:
-            all_results[strategy][pair_name] = {}
-            for layer_idx in range(n_layers):
-                all_results[strategy][pair_name][layer_idx] = {}
-                for coef in steering_coefficients:
-                    all_results[strategy][pair_name][layer_idx][coef] = {
-                        "metrics": {},
-                        "ccs": None,
-                    }
+    ccs_models = {}  # Store trained CCS models for visualization
 
-    # Training and evaluation code goes here
-    # ...
+    # Calculate total training tasks
+    total_tasks = (
+        len(embedding_strategies)
+        * len(data_pair_types)
+        * n_layers
+        * len(steering_coefficients)
+    )
 
+    with tqdm(total=total_tasks, desc="Training CCS probes", unit="task") as pbar:
+        for strategy in embedding_strategies:
+            logger.info(f"Training CCS probes for strategy: {strategy}")
+            all_results[strategy] = {}
+            ccs_models[strategy] = {}
+
+            for pair_name, pair_description in data_pair_types:
+                logger.info(f"Processing pair type: {pair_name}")
+                all_results[strategy][pair_name] = {}
+
+                for layer_idx in range(n_layers):
+                    logger.info(f"Processing layer {layer_idx}")
+                    all_results[strategy][pair_name][layer_idx] = {}
+
+                    # Get representations for this strategy and layer
+                    layer_representations = representations[strategy][layer_idx]
+
+                    for coef in steering_coefficients:
+                        pbar.set_postfix(
+                            {
+                                "strategy": strategy,
+                                "pair": pair_name[:15] + "..."
+                                if len(pair_name) > 15
+                                else pair_name,
+                                "layer": layer_idx,
+                                "coef": coef,
+                            }
+                        )
+
+                        logger.debug(f"Training with coefficient {coef}")
+
+                        # Train CCS probe for this combination
+                        ccs_result = train_single_ccs_probe(
+                            representations=layer_representations,
+                            pair_type=pair_name,
+                            steering_coefficient=coef,
+                            n_epochs=n_epochs,
+                            learning_rate=learning_rate,
+                            device=device,
+                        )
+
+                        all_results[strategy][pair_name][layer_idx][coef] = {
+                            "metrics": ccs_result["metrics"],
+                            "ccs": ccs_result["ccs"],
+                        }
+
+                        # Store CCS model for visualization (use coefficient 0.0 as baseline)
+                        if coef == 0.0:
+                            ccs_models[strategy][layer_idx] = ccs_result["ccs"]
+
+                        logger.debug(
+                            f"Completed training for {strategy}/{pair_name}/layer_{layer_idx}/coef_{coef}"
+                        )
+
+                        pbar.update(1)
+
+    print("\n🎨 PHASE 4: Generating visualizations...")
+    # Generate visualizations with the extracted data
+    generate_visualizations(
+        representations=representations,
+        steering_vectors=steering_vectors,
+        ccs_models=ccs_models,
+        all_results=all_results,
+        plot_dir=plot_dir,
+        embedding_strategies=embedding_strategies,
+        data_pair_types=data_pair_types,
+        steering_coefficients=steering_coefficients,
+        n_layers=n_layers,
+    )
+
+    print("\n📊 PHASE 5: Generating result tables...")
     # Generate tables with the results
     generate_result_tables(
         all_results,
@@ -137,48 +485,95 @@ def train_ccs_with_steering_strategies(
         n_layers,
     )
 
+    print("\n✅ Training and analysis completed successfully!")
+    logger.info("Training and analysis completed successfully")
     return all_results
 
 
 def generate_visualizations(
+    representations,
+    steering_vectors,
+    ccs_models,
     all_results,
     plot_dir,
     embedding_strategies,
     data_pair_types,
     steering_coefficients,
     n_layers,
-    model=None,
-    tokenizer=None,
-    train_dataloader=None,
-    device=None,
 ):
-    """Create visualizations from the results.
+    """Create visualizations from the extracted data.
+
+    CHANGED: Removed all validation, only use proper data structure.
 
     Args:
-        all_results: Dictionary of results with structure all_results[strategy][pair_name][layer_idx][coef]
+        representations: Dict[strategy][layer_idx] -> Dict[data_type] -> numpy array
+        steering_vectors: Dict[strategy][layer_idx] -> Dict[vector_type] -> {"vector": array, "color": str, "label": str}
+        ccs_models: Dict[strategy][layer_idx] -> CCS model
+        all_results: Dictionary of results
         plot_dir: Directory to save plots
         embedding_strategies: List of embedding strategies
-        data_pair_types: List of data pair types as (name, description) tuples
+        data_pair_types: List of data pair types
         steering_coefficients: List of steering coefficients
         n_layers: Number of layers
-        model: The model to extract representations from
-        tokenizer: The tokenizer for the model
-        train_dataloader: DataLoader containing the training data
-        device: Device to use for computation
     """
+    logger = logging.getLogger(__name__)
+
     # Ensure plot directory exists
     os.makedirs(plot_dir, exist_ok=True)
 
-    # Plot metrics across layers for each strategy and pair type
+    # 1. Generate coefficient sweep comparison
+    logger.info("Generating coefficient sweep comparison plot...")
+    metrics_for_sweep = ["accuracy", "silhouette", "auc", "class_separability"]
+
+    # Convert the nested all_results structure into a flat list for the plotting function
+    flattened_results = []
+    for layer_idx in range(n_layers):
+        # Create a data point using our custom class
+        layer_result = PlotDataPoint(layer_idx)
+
+        # Use the first available strategy and pair
+        for strategy in embedding_strategies:
+            if strategy in all_results:
+                for pair_name, _ in data_pair_types:
+                    if (
+                        pair_name in all_results[strategy]
+                        and layer_idx in all_results[strategy][pair_name]
+                    ):
+                        for coef in steering_coefficients:
+                            if coef in all_results[strategy][pair_name][layer_idx]:
+                                metrics = all_results[strategy][pair_name][layer_idx][
+                                    coef
+                                ].get("metrics", {})
+                                layer_result[f"coef_{coef}"] = metrics
+
+                        # Only need data from one strategy/pair combination
+                        if any(
+                            f"coef_{coef}" in layer_result.data
+                            for coef in steering_coefficients
+                        ):
+                            break
+                if any(
+                    f"coef_{coef}" in layer_result.data
+                    for coef in steering_coefficients
+                ):
+                    break
+
+        flattened_results.append(layer_result.to_dict())
+
+    sweep_path = os.path.join(plot_dir, "coefficient_sweep_comparison.png")
+    plot_coefficient_sweep_lines_comparison(
+        results=flattened_results, metrics=metrics_for_sweep, save_path=sweep_path
+    )
+    logger.info(f"Saved coefficient sweep comparison plot to {sweep_path}")
+
+    # 2. Generate performance plots for each strategy and pair type
+    logger.info("Generating individual performance plots...")
     metrics_to_plot = ["accuracy", "silhouette", "auc", "class_separability"]
 
-    # Initialize data structures
-    all_layer_data = []
-    all_strategy_data = {}
-    all_steering_vectors = {}
-
-    # Generate individual plots for each strategy/pair/metric combination
     for strategy in embedding_strategies:
+        if strategy not in all_results:
+            continue
+
         for pair_name, pair_description in data_pair_types:
             if pair_name not in all_results[strategy]:
                 continue
@@ -194,679 +589,193 @@ def generate_visualizations(
                     if layer_idx not in all_results[strategy][pair_name]:
                         continue
 
-                    # Create layer data dictionary with proper typing
-                    layer_data = {}
-                    layer_data["layer_idx"] = layer_idx
+                    # Create a data point using our custom class
+                    data_point = PlotDataPoint(layer_idx)
 
                     # Add baseline data (coef=0.0)
                     if 0.0 in all_results[strategy][pair_name][layer_idx]:
-                        if (
-                            "metrics"
-                            in all_results[strategy][pair_name][layer_idx][0.0]
-                        ):
-                            metrics_dict = all_results[strategy][pair_name][layer_idx][
-                                0.0
-                            ]["metrics"]
-                            if metric in metrics_dict:
-                                metric_value = metrics_dict[metric]
-
-                                # Create the nested structure explicitly
-                                base_metrics = {}
-                                base_metrics[metric] = metric_value
-
-                                final_metrics = {}
-                                final_metrics["base_metrics"] = base_metrics
-
-                                layer_data["final_metrics"] = final_metrics
+                        metrics_dict = all_results[strategy][pair_name][layer_idx][
+                            0.0
+                        ].get("metrics", {})
+                        if metric in metrics_dict:
+                            data_point["final_metrics"] = {
+                                "base_metrics": {metric: metrics_dict[metric]}
+                            }
 
                     # Add data for each coefficient
                     for coef in steering_coefficients:
                         if coef in all_results[strategy][pair_name][layer_idx]:
-                            if (
-                                "metrics"
-                                in all_results[strategy][pair_name][layer_idx][coef]
-                            ):
-                                metrics_dict = all_results[strategy][pair_name][
-                                    layer_idx
-                                ][coef]["metrics"]
-                                if metric in metrics_dict:
-                                    metric_value = metrics_dict[metric]
+                            metrics_dict = all_results[strategy][pair_name][layer_idx][
+                                coef
+                            ].get("metrics", {})
+                            if metric in metrics_dict:
+                                data_point[f"coef_{coef}"] = {
+                                    metric: metrics_dict[metric]
+                                }
 
-                                    # Create coefficient data explicitly
-                                    coef_data = {}
-                                    coef_data[metric] = metric_value
-
-                                    layer_data[f"coef_{coef}"] = coef_data
-
-                    plot_data.append(layer_data)
+                    plot_data.append(data_point.to_dict())
 
                 # Create plot
                 save_path = os.path.join(strategy_pair_dir, f"performance_{metric}.png")
                 plot_performance_across_layers(
                     results=plot_data, metric=metric, save_path=save_path
                 )
+                logger.info(f"Saved performance plot: {save_path}")
 
-    # Create comparison plots for different strategies
-    for pair_name, pair_description in data_pair_types:
-        pair_dir = os.path.join(plot_dir, f"comparison_{pair_name}")
-        os.makedirs(pair_dir, exist_ok=True)
+    # 3. Generate all strategies all steering vectors plots for each layer
+    # logger.info("Generating all strategies all steering vectors plots...")
+    # for layer_idx in range(n_layers):
+    #     # Prepare data for this layer - get data from actual structure
+    #     layer_representations = {}
+    #     layer_steering_vectors = {}
 
-        for metric in metrics_to_plot:
-            for coef in steering_coefficients:
-                # Prepare data for comparison plot
-                strategy_comparison = []
+    #     for strategy in embedding_strategies:
+    #         if strategy in representations and layer_idx in representations[strategy]:
+    #             layer_representations[strategy] = representations[strategy][layer_idx]
 
-                for strategy in embedding_strategies:
-                    if pair_name not in all_results[strategy]:
-                        continue
+    #         if strategy in steering_vectors and layer_idx in steering_vectors[strategy]:
+    #             layer_steering_vectors[strategy] = steering_vectors[strategy][layer_idx]
 
-                    strategy_data = {"name": strategy, "values": []}
+    #     # Only plot if we have data for at least one strategy
+    #     if layer_representations and layer_steering_vectors:
+    #         plot_path = plot_all_strategies_all_steering_vectors(
+    #             plot_dir=plot_dir,
+    #             layer_idx=layer_idx,
+    #             representations=layer_representations,
+    #             all_steering_vectors_by_strategy=layer_steering_vectors,
+    #         )
 
-                    for layer_idx in range(n_layers):
-                        # Find metrics for this layer and coefficient
-                        value = None
-                        if (
-                            layer_idx in all_results[strategy][pair_name]
-                            and coef in all_results[strategy][pair_name][layer_idx]
-                            and "metrics"
-                            in all_results[strategy][pair_name][layer_idx][coef]
-                            and metric
-                            in all_results[strategy][pair_name][layer_idx][coef][
-                                "metrics"
-                            ]
-                        ):
-                            value = all_results[strategy][pair_name][layer_idx][coef][
-                                "metrics"
-                            ][metric]
+    #         if plot_path:
+    #             logger.info(
+    #                 f"Saved all strategies steering vectors plot for layer {layer_idx}: {plot_path}"
+    #             )
+    #         else:
+    #             logger.warning(
+    #                 f"Failed to create steering vectors plot for layer {layer_idx}"
+    #             )
+    #     else:
+    #         logger.warning(f"No data for layer {layer_idx} steering vectors plot")
 
-                        strategy_data["values"].append(value)
+    # 4. Generate layer vectors plot
+    logger.info("Generating layer vectors plot...")
+    # Create layer data compatible with plot_all_layer_vectors
+    layer_vectors_data = []
 
-                    strategy_comparison.append(strategy_data)
-
-                # Create comparison plot
-                save_path = os.path.join(
-                    pair_dir, f"strategy_comparison_{metric}_coef_{coef}.png"
-                )
-
-                # Create a simple matplotlib plot with arrays
-                import matplotlib.pyplot as plt
-
-                plt.figure(figsize=(12, 6))
-
-                x = list(range(n_layers))
-                for strategy_data in strategy_comparison:
-                    values = strategy_data["values"]
-                    plt.plot(x, values, marker="o", label=strategy_data["name"])
-
-                plt.title(
-                    f"{pair_description} - {metric.capitalize()} Comparison (Coef={coef})"
-                )
-                plt.xlabel("Layer")
-                plt.ylabel(metric.capitalize())
-                plt.legend()
-                plt.grid(True)
-                plt.savefig(save_path)
-                plt.close()
-
-                print(f"Saved strategy comparison plot to {save_path}")
-
-    # Collect data for comprehensive visualizations
-    print("Collecting data for comprehensive visualizations...")
-
-    # Initialize data structures
     for layer_idx in range(n_layers):
-        # Initialize layer data structures
-        all_strategy_data[layer_idx] = {}
-        all_steering_vectors[layer_idx] = {}
+        # Use first available strategy
+        first_strategy = embedding_strategies[0]
 
-        for strategy in embedding_strategies:
-            # Initialize strategy data structures
-            all_strategy_data[layer_idx][strategy] = {
-                "hate_yes": None,
-                "hate_no": None,
-                "safe_yes": None,
-                "safe_no": None,
-                "hate": None,
-                "safe": None,
+        if (
+            first_strategy in representations
+            and layer_idx in representations[first_strategy]
+            and first_strategy in steering_vectors
+            and layer_idx in steering_vectors[first_strategy]
+        ):
+            layer_reps = representations[first_strategy][layer_idx]
+            layer_steering = steering_vectors[first_strategy][layer_idx]
+
+            # Calculate mean vectors for hate and safe
+            hate_combined = np.vstack([layer_reps["hate_yes"], layer_reps["safe_no"]])
+            safe_combined = np.vstack([layer_reps["safe_yes"], layer_reps["hate_no"]])
+
+            hate_mean = np.mean(hate_combined, axis=0)
+            safe_mean = np.mean(safe_combined, axis=0)
+
+            # Use combined steering vector
+            if "combined" in layer_steering:
+                steering_vector = layer_steering["combined"]["vector"]
+            else:
+                # Use first available steering vector
+                steering_vector = list(layer_steering.values())[0]["vector"]
+
+            layer_data = {
+                "hate_mean_vector": hate_mean,
+                "safe_mean_vector": safe_mean,
+                "steering_vector": steering_vector,
+                "layer_idx": layer_idx,
             }
 
-            all_steering_vectors[layer_idx][strategy] = {}
+            layer_vectors_data.append(layer_data)
 
-            # Extract data from all_results
-            for pair_name, _ in data_pair_types:
-                if (
-                    pair_name in all_results[strategy]
-                    and layer_idx in all_results[strategy][pair_name]
-                    and 0.0 in all_results[strategy][pair_name][layer_idx]
-                ):
-                    # Get steering vector if available
-                    if (
-                        "steering_vector"
-                        in all_results[strategy][pair_name][layer_idx][0.0]
-                    ):
-                        all_steering_vectors[layer_idx][strategy][pair_name] = {
-                            "vector": all_results[strategy][pair_name][layer_idx][0.0][
-                                "steering_vector"
-                            ],
-                            "color": {
-                                "combined": "#00FF00",  # Green
-                                "hate_yes_to_safe_yes": "#FF00FF",  # Purple
-                                "safe_no_to_hate_no": "#FFFF00",  # Yellow
-                                "hate_yes_to_hate_no": "#FF9900",  # Orange
-                                "safe_yes_to_safe_no": "#00FFCC",  # Teal
-                            }.get(pair_name, "#00FF00"),
-                            "label": {
-                                "combined": "Combined Steering Vector",
-                                "hate_yes_to_safe_yes": "Hate Yes → Safe Yes",
-                                "safe_no_to_hate_no": "Safe No → Hate No",
-                                "hate_yes_to_hate_no": "Hate Yes → Hate No",
-                                "safe_yes_to_safe_no": "Safe Yes → Safe No",
-                            }.get(pair_name, pair_name),
-                        }
+    if layer_vectors_data:
+        vectors_path = plot_all_layer_vectors(
+            results=layer_vectors_data, save_dir=plot_dir
+        )
+        if vectors_path:
+            logger.info(f"Saved layer vectors plot: {vectors_path}")
+        else:
+            logger.warning("Failed to create layer vectors plot")
+    else:
+        logger.warning("No data available for layer vectors plot")
 
-                    # Get source and target vectors based on pair type
-                    if pair_name == "hate_yes_to_safe_yes":
-                        if (
-                            "source_vectors"
-                            in all_results[strategy][pair_name][layer_idx][0.0]
-                        ):
-                            all_strategy_data[layer_idx][strategy]["hate_yes"] = (
-                                all_results[
-                                    strategy
-                                ][pair_name][layer_idx][0.0]["source_vectors"]
-                            )
-                        if (
-                            "target_vectors"
-                            in all_results[strategy][pair_name][layer_idx][0.0]
-                        ):
-                            all_strategy_data[layer_idx][strategy]["safe_yes"] = (
-                                all_results[
-                                    strategy
-                                ][pair_name][layer_idx][0.0]["target_vectors"]
-                            )
+    # 5. Generate COMPREHENSIVE decision boundaries and data visualizations
+    logger.info("Generating comprehensive visualizations with decision boundaries...")
+    # Create directories for different visualization types
+    decision_boundaries_dir = os.path.join(plot_dir, "all_decision_boundaries")
+    steering_vectors_dir = os.path.join(plot_dir, "all_steering_vectors")
+    os.makedirs(decision_boundaries_dir, exist_ok=True)
+    os.makedirs(steering_vectors_dir, exist_ok=True)
 
-                    elif pair_name == "safe_no_to_hate_no":
-                        if (
-                            "source_vectors"
-                            in all_results[strategy][pair_name][layer_idx][0.0]
-                        ):
-                            all_strategy_data[layer_idx][strategy]["safe_no"] = (
-                                all_results[
-                                    strategy
-                                ][pair_name][layer_idx][0.0]["source_vectors"]
-                            )
-                        if (
-                            "target_vectors"
-                            in all_results[strategy][pair_name][layer_idx][0.0]
-                        ):
-                            all_strategy_data[layer_idx][strategy]["hate_no"] = (
-                                all_results[
-                                    strategy
-                                ][pair_name][layer_idx][0.0]["target_vectors"]
-                            )
-
-            # Check if we have all required data and create dummy data if needed
-            for key in ["hate_yes", "hate_no", "safe_yes", "safe_no"]:
-                if all_strategy_data[layer_idx][strategy][key] is None:
-                    print(
-                        f"Warning: {key} vectors missing for strategy {strategy} at layer {layer_idx}, extracting from model"
-                    )
-
-                    # Extract real representations from model if available
-                    if (
-                        model is not None
-                        and tokenizer is not None
-                        and train_dataloader is not None
-                        and device is not None
-                    ):
-                        # Get text samples for the specific category
-                        if key == "hate_yes":
-                            texts = train_dataloader.dataset.get_by_type("hate_yes")
-                        elif key == "hate_no":
-                            texts = train_dataloader.dataset.get_by_type("hate_no")
-                        elif key == "safe_yes":
-                            texts = train_dataloader.dataset.get_by_type("safe_yes")
-                        elif key == "safe_no":
-                            texts = train_dataloader.dataset.get_by_type("safe_no")
-                        else:
-                            texts = []
-
-                        # Limit to a reasonable number of samples to avoid memory issues
-                        texts = texts[:100] if len(texts) > 100 else texts
-
-                        if len(texts) > 0:
-                            # Extract representations
-                            vectors = []
-                            model.eval()
-                            with torch.no_grad():
-                                for text in texts:
-                                    inputs = tokenizer(
-                                        text,
-                                        return_tensors="pt",
-                                        truncation=True,
-                                        padding=True,
-                                    )
-                                    inputs = {
-                                        k: v.to(device) for k, v in inputs.items()
-                                    }
-                                    outputs = model(**inputs, output_hidden_states=True)
-                                    hidden_states = outputs.hidden_states
-
-                                    # Extract representation based on strategy
-                                    if strategy == "last-token":
-                                        # Get last token representation for each sequence
-                                        token_embeddings = hidden_states[layer_idx + 1]
-                                        last_token_idx = (
-                                            inputs["attention_mask"].sum(dim=1) - 1
-                                        )
-                                        batch_size = token_embeddings.shape[0]
-                                        vector = torch.stack(
-                                            [
-                                                token_embeddings[
-                                                    i, last_token_idx[i], :
-                                                ]
-                                                for i in range(batch_size)
-                                            ]
-                                        )
-                                    elif strategy == "first-token":
-                                        # Get first token (CLS) representation
-                                        vector = hidden_states[layer_idx + 1][:, 0, :]
-                                    elif strategy == "mean":
-                                        # Get mean of all token representations
-                                        token_embeddings = hidden_states[layer_idx + 1]
-                                        mask = (
-                                            inputs["attention_mask"]
-                                            .unsqueeze(-1)
-                                            .expand(token_embeddings.size())
-                                            .float()
-                                        )
-                                        vector = torch.sum(
-                                            token_embeddings * mask, 1
-                                        ) / torch.clamp(mask.sum(1), min=1e-9)
-                                    else:
-                                        # Default to mean pooling
-                                        token_embeddings = hidden_states[layer_idx + 1]
-                                        mask = (
-                                            inputs["attention_mask"]
-                                            .unsqueeze(-1)
-                                            .expand(token_embeddings.size())
-                                            .float()
-                                        )
-                                        vector = torch.sum(
-                                            token_embeddings * mask, 1
-                                        ) / torch.clamp(mask.sum(1), min=1e-9)
-
-                                    vectors.append(vector.cpu().numpy())
-
-                            # Concatenate all vectors
-                            if vectors:
-                                all_strategy_data[layer_idx][strategy][key] = np.vstack(
-                                    vectors
-                                )
-                                continue
-
-                    # Fall back to random vectors if extraction failed
-                    print(
-                        f"Warning: Could not extract real representations for {key}, using random data"
-                    )
-                    all_strategy_data[layer_idx][strategy][key] = np.random.randn(
-                        100, 768
-                    )
-
-            # Create combined hate and safe vectors
-            all_strategy_data[layer_idx][strategy]["hate"] = np.vstack(
-                [
-                    all_strategy_data[layer_idx][strategy]["hate_yes"],
-                    all_strategy_data[layer_idx][strategy]["safe_no"],
-                ]
-            )
-
-            all_strategy_data[layer_idx][strategy]["safe"] = np.vstack(
-                [
-                    all_strategy_data[layer_idx][strategy]["safe_yes"],
-                    all_strategy_data[layer_idx][strategy]["hate_no"],
-                ]
-            )
-
-            # Ensure we have all required steering vectors
-            for pair_name, _ in data_pair_types:
-                if pair_name not in all_steering_vectors[layer_idx][strategy]:
-                    print(
-                        f"Warning: steering vector for {pair_name} missing for strategy {strategy} at layer {layer_idx}, calculating from data"
-                    )
-
-                    # Calculate steering vector from data if possible
-                    if (
-                        pair_name == "hate_yes_to_safe_yes"
-                        and "hate_yes" in all_strategy_data[layer_idx][strategy]
-                        and "safe_yes" in all_strategy_data[layer_idx][strategy]
-                    ):
-                        hate_yes_mean = np.mean(
-                            all_strategy_data[layer_idx][strategy]["hate_yes"], axis=0
-                        )
-                        safe_yes_mean = np.mean(
-                            all_strategy_data[layer_idx][strategy]["safe_yes"], axis=0
-                        )
-                        steering_vector = safe_yes_mean - hate_yes_mean
-                    elif (
-                        pair_name == "safe_no_to_hate_no"
-                        and "safe_no" in all_strategy_data[layer_idx][strategy]
-                        and "hate_no" in all_strategy_data[layer_idx][strategy]
-                    ):
-                        safe_no_mean = np.mean(
-                            all_strategy_data[layer_idx][strategy]["safe_no"], axis=0
-                        )
-                        hate_no_mean = np.mean(
-                            all_strategy_data[layer_idx][strategy]["hate_no"], axis=0
-                        )
-                        steering_vector = hate_no_mean - safe_no_mean
-                    elif (
-                        pair_name == "hate_yes_to_hate_no"
-                        and "hate_yes" in all_strategy_data[layer_idx][strategy]
-                        and "hate_no" in all_strategy_data[layer_idx][strategy]
-                    ):
-                        hate_yes_mean = np.mean(
-                            all_strategy_data[layer_idx][strategy]["hate_yes"], axis=0
-                        )
-                        hate_no_mean = np.mean(
-                            all_strategy_data[layer_idx][strategy]["hate_no"], axis=0
-                        )
-                        steering_vector = hate_no_mean - hate_yes_mean
-                    elif (
-                        pair_name == "safe_yes_to_safe_no"
-                        and "safe_yes" in all_strategy_data[layer_idx][strategy]
-                        and "safe_no" in all_strategy_data[layer_idx][strategy]
-                    ):
-                        safe_yes_mean = np.mean(
-                            all_strategy_data[layer_idx][strategy]["safe_yes"], axis=0
-                        )
-                        safe_no_mean = np.mean(
-                            all_strategy_data[layer_idx][strategy]["safe_no"], axis=0
-                        )
-                        steering_vector = safe_no_mean - safe_yes_mean
-                    elif pair_name == "combined":
-                        # Combined vector is the average of all other vectors
-                        combined_vectors = []
-                        for p in ["hate_yes_to_safe_yes", "safe_no_to_hate_no"]:
-                            if p in all_steering_vectors[layer_idx][strategy]:
-                                combined_vectors.append(
-                                    all_steering_vectors[layer_idx][strategy][p][
-                                        "vector"
-                                    ]
-                                )
-
-                        if combined_vectors:
-                            steering_vector = np.mean(combined_vectors, axis=0)
-                        else:
-                            # Calculate from hate and safe means
-                            if (
-                                "hate" in all_strategy_data[layer_idx][strategy]
-                                and "safe" in all_strategy_data[layer_idx][strategy]
-                            ):
-                                hate_mean = np.mean(
-                                    all_strategy_data[layer_idx][strategy]["hate"],
-                                    axis=0,
-                                )
-                                safe_mean = np.mean(
-                                    all_strategy_data[layer_idx][strategy]["safe"],
-                                    axis=0,
-                                )
-                                steering_vector = safe_mean - hate_mean
-                            else:
-                                # Fall back to random vector
-                                steering_vector = np.random.randn(768)
-                    else:
-                        # Fall back to random vector
-                        steering_vector = np.random.randn(768)
-
-                    # Normalize the steering vector
-                    norm = np.linalg.norm(steering_vector)
-                    if norm > 1e-10:
-                        steering_vector = steering_vector / norm
-
-                    all_steering_vectors[layer_idx][strategy][pair_name] = {
-                        "vector": steering_vector,
-                        "color": {
-                            "combined": "#00FF00",  # Green
-                            "hate_yes_to_safe_yes": "#FF00FF",  # Purple
-                            "safe_no_to_hate_no": "#FFFF00",  # Yellow
-                            "hate_yes_to_hate_no": "#FF9900",  # Orange
-                            "safe_yes_to_safe_no": "#00FFCC",  # Teal
-                        }.get(pair_name, "#00FF00"),
-                        "label": {
-                            "combined": "Combined Steering Vector",
-                            "hate_yes_to_safe_yes": "Hate Yes → Safe Yes",
-                            "safe_no_to_hate_no": "Safe No → Hate No",
-                            "hate_yes_to_hate_no": "Hate Yes → Hate No",
-                            "safe_yes_to_safe_no": "Safe Yes → Safe No",
-                        }.get(pair_name, pair_name),
-                    }
-
-    # Populate all_layer_data for decision boundary plots
+    # Process each layer
     for layer_idx in range(n_layers):
-        # Use the first strategy as the default
-        if embedding_strategies and layer_idx in all_strategy_data:
-            default_strategy = embedding_strategies[0]
-            if default_strategy in all_strategy_data[layer_idx]:
-                strategy_data = all_strategy_data[layer_idx][default_strategy]
+        logger.info(f"Creating comprehensive visualizations for layer {layer_idx}")
 
-                # Create layer data
-                layer_data = {
-                    "layer_idx": layer_idx,
-                    "hate_vectors": strategy_data["hate"],
-                    "safe_vectors": strategy_data["safe"],
-                    "hate_mean_vector": np.mean(strategy_data["hate"], axis=0),
-                    "safe_mean_vector": np.mean(strategy_data["safe"], axis=0),
+        # Collect data for this layer
+        layer_representations = {}
+        layer_steering_vectors = {}
+        layer_ccs_models = {}
+
+        for strategy in embedding_strategies:
+            # Check if we have all required data
+            if (
+                strategy in representations
+                and layer_idx in representations[strategy]
+                and strategy in steering_vectors
+                and layer_idx in steering_vectors[strategy]
+                and strategy in ccs_models
+                and layer_idx in ccs_models[strategy]
+            ):
+                # Add to the dictionaries
+                layer_representations[strategy] = representations[strategy][layer_idx]
+                layer_steering_vectors[strategy] = steering_vectors[strategy][layer_idx]
+                layer_ccs_models[strategy] = {
+                    layer_idx: ccs_models[strategy][layer_idx]
                 }
 
-                # Add steering vector if available
-                if (
-                    default_strategy in all_steering_vectors[layer_idx]
-                    and "combined" in all_steering_vectors[layer_idx][default_strategy]
-                ):
-                    layer_data["steering_vector"] = all_steering_vectors[layer_idx][
-                        default_strategy
-                    ]["combined"]["vector"]
-                else:
-                    # Create a dummy steering vector as the difference between hate and safe means
-                    layer_data["steering_vector"] = (
-                        layer_data["safe_mean_vector"] - layer_data["hate_mean_vector"]
-                    )
+        # 1. Create decision boundaries visualization (if we have CCS models)
+        if layer_representations and layer_steering_vectors and layer_ccs_models:
+            layer_dir = decision_boundaries_dir
+            os.makedirs(layer_dir, exist_ok=True)
 
-                all_layer_data.append(layer_data)
-
-    # Generate comprehensive plots
-    # 1. Generate coefficient sweep comparison
-    print("Generating coefficient sweep comparison plot...")
-    metrics_for_sweep = ["accuracy", "silhouette", "auc", "class_separability"]
-    available_metrics = []
-
-    # Check which metrics are available in the results
-    for strategy in embedding_strategies:
-        for pair_name in all_results[strategy]:
-            for layer_idx in range(n_layers):
-                if layer_idx in all_results[strategy][pair_name]:
-                    for coef in steering_coefficients:
-                        if coef in all_results[strategy][pair_name][layer_idx]:
-                            metrics_dict = all_results[strategy][pair_name][layer_idx][
-                                coef
-                            ].get("metrics", {})
-                            for metric in metrics_for_sweep:
-                                if (
-                                    metric in metrics_dict
-                                    and metric not in available_metrics
-                                ):
-                                    available_metrics.append(metric)
-
-    if available_metrics:
-        # Convert the nested all_results structure into a flat list for the plotting function
-        flattened_results = []
-
-        for layer_idx in range(n_layers):
-            layer_result = {"layer_idx": layer_idx}
-
-            # Use the first available strategy and pair
-            for strategy in embedding_strategies:
-                for pair_name in all_results[strategy]:
-                    if layer_idx in all_results[strategy][pair_name]:
-                        for coef in steering_coefficients:
-                            if coef in all_results[strategy][pair_name][layer_idx]:
-                                metrics = all_results[strategy][pair_name][layer_idx][
-                                    coef
-                                ].get("metrics", {})
-                                layer_result[f"coef_{coef}"] = metrics
-
-                        # Only need data from one strategy/pair combination
-                        if any(
-                            f"coef_{coef}" in layer_result
-                            for coef in steering_coefficients
-                        ):
-                            break
-
-                # Break if we found data for this layer
-                if any(
-                    f"coef_{coef}" in layer_result for coef in steering_coefficients
-                ):
-                    break
-
-            flattened_results.append(layer_result)
-
-        sweep_path = os.path.join(plot_dir, "coefficient_sweep_comparison.png")
-        plot_coefficient_sweep_lines_comparison(
-            results=flattened_results, metrics=available_metrics, save_path=sweep_path
-        )
-        print(f"Saved coefficient sweep comparison plot to {sweep_path}")
-
-    # 2. Generate all layer vectors plot
-    print("Generating all layer vectors plot...")
-    if all_layer_data:
-        vectors_path = plot_all_layer_vectors(results=all_layer_data, save_dir=plot_dir)
-        if vectors_path:
-            print(f"Saved all layer vectors plot to {vectors_path}")
-        else:
-            print("Failed to create all layer vectors plot")
-    else:
-        print("Skipping all layer vectors plot due to missing data")
-
-    # 3. Generate all decision boundaries plot
-    print("Generating all decision boundaries plot...")
-    if all_layer_data:
-        boundaries_path = plot_all_decision_boundaries(
-            layers_data=all_layer_data,
-            log_base=os.path.join(plot_dir, "all_decision_boundaries"),
-        )
-        if boundaries_path:
-            print(f"Saved all decision boundaries plot to {boundaries_path}")
-        else:
-            print("Failed to create all decision boundaries plot")
-
-        # 3.1 Generate individual layer decision boundary plots
-        for i, layer_data in enumerate(all_layer_data):
-            if (
-                "hate_vectors" in layer_data
-                and "safe_vectors" in layer_data
-                and "steering_vector" in layer_data
-            ):
-                # Create a simple CCS-like object for visualization
-                class DummyCCS:
-                    def predict_from_vectors(self, vectors):
-                        # Simple linear classifier using steering vector
-                        steering = layer_data["steering_vector"]
-                        # Project vectors onto steering direction
-                        projections = np.dot(vectors, steering)
-                        # Use sigmoid to get probabilities
-                        probs = 1 / (1 + np.exp(-projections))
-                        # Convert to binary predictions
-                        preds = (probs > 0.5).astype(int)
-                        return preds, probs
-
-                dummy_ccs = DummyCCS()
-
-                # Generate decision boundary plot for this layer
-                layer_boundary_path = os.path.join(
-                    plot_dir, f"layer_{i}_decision_boundary.png"
-                )
-                visualize_decision_boundary(
-                    ccs=dummy_ccs,
-                    hate_vectors=layer_data["hate_vectors"],
-                    safe_vectors=layer_data["safe_vectors"],
-                    steering_vector=layer_data["steering_vector"],
-                    log_base=layer_boundary_path[:-4],  # Remove .png extension
-                    layer_idx=i,
-                    strategy="last-token",  # Using default strategy
-                )
-                print(
-                    f"Saved decision boundary plot for layer {i} to {layer_boundary_path}"
-                )
-    else:
-        print("Skipping all decision boundaries plot due to missing data")
-
-    # 4. Generate all strategies all steering vectors plots for each layer
-    for layer_idx in range(n_layers):
-        # Check if we have enough data for this layer
-        print(
-            f"Generating all strategies all steering vectors plot for layer {layer_idx}..."
-        )
-
-        # Verify we have data for this layer before plotting
-        has_data_for_layer = True
-        for strategy in embedding_strategies:
-            if (
-                layer_idx not in all_strategy_data
-                or strategy not in all_strategy_data[layer_idx]
-                or layer_idx not in all_steering_vectors
-                or strategy not in all_steering_vectors[layer_idx]
-            ):
-                has_data_for_layer = False
-                print(
-                    f"Warning: Missing data for strategy {strategy} at layer {layer_idx}, skipping plot"
-                )
-                break
-
-            # Also check if we have the necessary data in the strategy data
-            if (
-                "hate" not in all_strategy_data[layer_idx][strategy]
-                or "safe" not in all_strategy_data[layer_idx][strategy]
-            ):
-                has_data_for_layer = False
-                print(
-                    f"Warning: Missing hate/safe data for strategy {strategy} at layer {layer_idx}, skipping plot"
-                )
-                break
-
-        if has_data_for_layer:
-            # Debug information
-            print(
-                f"All steering vectors keys: {list(all_steering_vectors[layer_idx].keys())}"
+            plot_all_decision_boundaries(
+                representations=layer_representations,
+                steering_vectors=layer_steering_vectors,
+                ccs_models=layer_ccs_models,
+                save_dir=layer_dir,
+                strategies=list(layer_representations.keys()),
+                max_samples_per_type=50,
             )
-            for strategy in all_steering_vectors[layer_idx]:
-                print(
-                    f"Data keys for strategy {strategy}: {list(all_strategy_data[layer_idx][strategy].keys())}"
-                )
-                for key in ["hate_yes", "hate_no", "safe_yes", "safe_no"]:
-                    print(
-                        f"{strategy} - {key} shape: {all_strategy_data[layer_idx][strategy][key].shape}"
-                    )
+            logger.info(f"Created decision boundaries plot for layer {layer_idx}")
 
+        # 2. Create comprehensive steering vectors visualization
+        if layer_representations and layer_steering_vectors:
             plot_path = plot_all_strategies_all_steering_vectors(
-                plot_dir=plot_dir,
+                plot_dir=steering_vectors_dir,
                 layer_idx=layer_idx,
-                representations=all_strategy_data[layer_idx],
-                all_steering_vectors_by_strategy=all_steering_vectors[layer_idx],
+                representations=layer_representations,
+                all_steering_vectors_by_strategy=layer_steering_vectors,
             )
 
             if plot_path:
-                print(
-                    f"Saved all strategies all steering vectors plot for layer {layer_idx} to {plot_path}"
+                logger.info(
+                    f"Created steering vectors visualization for layer {layer_idx}"
                 )
             else:
-                print(
-                    f"Failed to create all strategies all steering vectors plot for layer {layer_idx}"
+                logger.warning(
+                    f"Failed to create steering vectors visualization for layer {layer_idx}"
                 )
-        else:
-            print(
-                f"Skipping all strategies all steering vectors plot for layer {layer_idx} due to missing data"
-            )
+
+    logger.info("Visualization generation completed")
 
 
 def generate_result_tables(
@@ -878,6 +787,7 @@ def generate_result_tables(
     n_layers,
 ):
     """Generate tables summarizing the results."""
+    logger = logging.getLogger(__name__)
     os.makedirs(table_dir, exist_ok=True)
 
     # Create a comprehensive CSV
@@ -897,86 +807,123 @@ def generate_result_tables(
             "Class Separability",
         ]
         writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-
         writer.writeheader()
 
         for strategy in embedding_strategies:
+            if strategy not in all_results:
+                continue
+
             for pair_name, pair_description in data_pair_types:
-                if pair_name in all_results[strategy]:
-                    for layer_idx in range(n_layers):
-                        if layer_idx in all_results[strategy][pair_name]:
-                            for coef in steering_coefficients:
-                                if coef in all_results[strategy][pair_name][layer_idx]:
-                                    metrics = all_results[strategy][pair_name][
-                                        layer_idx
-                                    ][coef].get("metrics", {})
+                if pair_name not in all_results[strategy]:
+                    continue
 
-                                    # Create a new dictionary for each row with proper string values
-                                    row_dict = {}
-                                    row_dict["Strategy"] = str(strategy)
-                                    row_dict["Pair Type"] = str(pair_name)
-                                    row_dict["Layer"] = str(layer_idx)
-                                    row_dict["Coefficient"] = str(coef)
+                for layer_idx in range(n_layers):
+                    if layer_idx not in all_results[strategy][pair_name]:
+                        continue
 
-                                    # Add metrics with proper conversion
-                                    row_dict["Accuracy"] = str(
-                                        metrics.get("accuracy", "N/A")
-                                    )
-                                    row_dict["Silhouette"] = str(
-                                        metrics.get("silhouette", "N/A")
-                                    )
-                                    row_dict["AUC"] = str(metrics.get("auc", "N/A"))
-                                    row_dict["Class Separability"] = str(
-                                        metrics.get("class_separability", "N/A")
-                                    )
-
-                                    writer.writerow(row_dict)
-
-    print(f"Saved comprehensive results to {csv_path}")
-
-    # Create summary tables for each strategy/pair type
-    for strategy in embedding_strategies:
-        for pair_name, pair_description in data_pair_types:
-            if pair_name in all_results[strategy]:
-                # Create a summary table comparing coefficients
-                summary_path = os.path.join(
-                    table_dir, f"summary_{strategy}_{pair_name}.csv"
-                )
-
-                with open(summary_path, "w", newline="") as csvfile:
-                    fieldnames = ["Layer"]
                     for coef in steering_coefficients:
-                        fieldnames.append(f"Accuracy (Coef={coef})")
+                        if coef not in all_results[strategy][pair_name][layer_idx]:
+                            continue
 
-                    writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-                    writer.writeheader()
+                        metrics = all_results[strategy][pair_name][layer_idx][coef].get(
+                            "metrics", {}
+                        )
 
-                    for layer_idx in range(n_layers):
-                        if layer_idx in all_results[strategy][pair_name]:
-                            # Create a new dictionary for each row
-                            row_dict = {}
-                            row_dict["Layer"] = str(layer_idx)
+                        row_dict = {
+                            "Strategy": str(strategy),
+                            "Pair Type": str(pair_name),
+                            "Layer": str(layer_idx),
+                            "Coefficient": str(coef),
+                            "Accuracy": str(metrics.get("accuracy", "N/A")),
+                            "Silhouette": str(metrics.get("silhouette", "N/A")),
+                            "AUC": str(metrics.get("auc", "N/A")),
+                            "Class Separability": str(
+                                metrics.get("class_separability", "N/A")
+                            ),
+                        }
 
-                            for coef in steering_coefficients:
-                                if (
-                                    coef in all_results[strategy][pair_name][layer_idx]
-                                    and "metrics"
-                                    in all_results[strategy][pair_name][layer_idx][coef]
-                                    and "accuracy"
-                                    in all_results[strategy][pair_name][layer_idx][
-                                        coef
-                                    ]["metrics"]
-                                ):
-                                    accuracy = all_results[strategy][pair_name][
-                                        layer_idx
-                                    ][coef]["metrics"]["accuracy"]
-                                    row_dict[f"Accuracy (Coef={coef})"] = str(accuracy)
+                        writer.writerow(row_dict)
+
+    logger.info(f"Saved comprehensive results to {csv_path}")
+
+    logger.info("Table generation completed")
+
+
+def analyze_steering_experiment_results(all_results, steering_coefficients, n_layers):
+    """
+    Analyze the results of the steering experiment.
+
+    Args:
+        all_results: Results from train_ccs_with_steering_strategies
+        steering_coefficients: List of steering coefficients used
+        n_layers: Number of layers analyzed
+    """
+    print("\n" + "=" * 80)
+    print("STEERING EXPERIMENT ANALYSIS")
+    print("=" * 80)
+
+    # Analyze each layer
+    for layer_idx in range(n_layers):
+        print(f"\nLayer {layer_idx} Analysis:")
+        print("-" * 40)
+
+        # Get baseline accuracy (steering_coefficient = 0.0)
+        baseline_acc = None
+        steering_accs = {}
+
+        # Extract accuracies for this layer across strategies and pairs
+        for strategy in all_results:
+            for pair_name in all_results[strategy]:
+                if layer_idx in all_results[strategy][pair_name]:
+                    for coef in steering_coefficients:
+                        if coef in all_results[strategy][pair_name][layer_idx]:
+                            acc = all_results[strategy][pair_name][layer_idx][coef][
+                                "metrics"
+                            ].get("accuracy", 0)
+
+                            if coef == 0.0:
+                                if baseline_acc is None:
+                                    baseline_acc = acc
                                 else:
-                                    row_dict[f"Accuracy (Coef={coef})"] = "N/A"
+                                    baseline_acc = (
+                                        baseline_acc + acc
+                                    ) / 2  # Average across strategies/pairs
+                            else:
+                                if coef not in steering_accs:
+                                    steering_accs[coef] = []
+                                steering_accs[coef].append(acc)
 
-                            writer.writerow(row_dict)
+        # Print analysis for this layer
+        if baseline_acc is not None:
+            print(f"  Baseline accuracy (no steering): {baseline_acc:.3f}")
 
-                print(f"Saved summary for {strategy}/{pair_name} to {summary_path}")
+            for coef in sorted(steering_accs.keys()):
+                if steering_accs[coef]:
+                    avg_acc = np.mean(steering_accs[coef])
+                    accuracy_change = avg_acc - baseline_acc
+                    print(
+                        f"  Steering {coef:4.1f}: {avg_acc:.3f} (change: {accuracy_change:+.3f})"
+                    )
+
+                    # Interpretation
+                    if accuracy_change > 0.05:
+                        print("    → Steering IMPROVES truth detection!")
+                    elif accuracy_change > -0.05:
+                        print("    → Steering preserves truth detection")
+                    elif accuracy_change > -0.15:
+                        print("    → Steering somewhat disrupts truth detection")
+                    else:
+                        print("    → Steering severely disrupts truth detection")
+        else:
+            print(f"  No data available for layer {layer_idx}")
+
+    print("\n" + "=" * 80)
+    print("OVERALL CONCLUSIONS:")
+    print("=" * 80)
+    print("• If accuracy stays high: Steering preserves truthfulness structure")
+    print("• If accuracy drops: Steering disrupts logical reasoning")
+    print("• If accuracy improves: Steering actually helps (very interesting!)")
+    print("• Compare across layers to see where steering helps/hurts most")
 
 
 if __name__ == "__main__":

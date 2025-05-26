@@ -5,14 +5,15 @@ from datetime import datetime
 
 import numpy as np
 import pandas as pd
-from ordinary_steering_metrics import plot_coefficient_sweep_lines_comparison
+from ordinary_steering.metrics_ordinary_steering import (
+    plot_coefficient_sweep_lines_comparison,
+)
 from tabulate import tabulate
 from tr_plotting import (
     plot_all_decision_boundaries,
     plot_all_layer_vectors,
     plot_all_strategies_all_steering_vectors,
     plot_performance_across_layers,
-    plot_vectors_all_strategies,
 )
 
 
@@ -450,11 +451,36 @@ def print_results_summary(
 
                 if valid_boundary_data:
                     decision_boundaries_path = os.path.join(
-                        plots_dir, "all_decision_boundaries.png"
+                        plots_dir, f"layer_{layer_idx}_all_decision_boundaries.png"
                     )
                     plot_all_decision_boundaries(
-                        layers_data=valid_boundary_data,
-                        log_base=os.path.join(plots_dir, "all_decision_boundaries"),
+                        representations={
+                            strategy: {
+                                "hate_yes": layer["hate_vectors"],
+                                "hate_no": layer["hate_vectors"],
+                                "safe_yes": layer["safe_vectors"],
+                                "safe_no": layer["safe_vectors"],
+                            }
+                            for strategy in ["last-token"]
+                            for layer in valid_boundary_data
+                        },
+                        steering_vectors={
+                            "last-token": {
+                                "combined": {
+                                    "vector": layer["steering_vector"],
+                                    "color": "#00FF00",
+                                    "label": "Steering Vector",
+                                }
+                                for layer in valid_boundary_data
+                            }
+                        },
+                        ccs_models={
+                            "last-token": {
+                                i: layer["ccs"]
+                                for i, layer in enumerate(valid_boundary_data)
+                            }
+                        },
+                        save_dir=os.path.join(plots_dir, "all_decision_boundaries"),
                     )
                     plot_paths.append(("Decision Boundaries", decision_boundaries_path))
                 else:
@@ -523,21 +549,6 @@ def print_results_summary(
                             f"Warning: Invalid steering vectors format for layer {layer_idx}. Type: {type(layer_steering_vectors)}"
                         )
                         continue
-
-                    # Plot vectors for all strategies
-                    strategy_plot_path = os.path.join(
-                        plots_dir, f"layer_{layer_idx}_all_strategies_vectors.png"
-                    )
-                    plot_vectors_all_strategies(
-                        layer_idx=layer_idx,
-                        all_strategy_data=layer_strategy_data,
-                        current_strategy="last-token",
-                        save_path=strategy_plot_path,
-                        all_steering_vectors=layer_steering_vectors,
-                    )
-                    plot_paths.append(
-                        (f"Layer {layer_idx} Strategies", strategy_plot_path)
-                    )
 
                     # All strategies, all steering vectors comprehensive plot
                     comprehensive_path = os.path.join(

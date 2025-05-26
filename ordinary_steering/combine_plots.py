@@ -9,7 +9,6 @@ This script:
 4. Saves the combined images
 """
 
-import argparse
 import glob
 import os
 import re
@@ -17,60 +16,6 @@ import re
 import matplotlib.pyplot as plt
 import numpy as np
 from PIL import Image
-
-
-def parse_args():
-    parser = argparse.ArgumentParser(
-        description="Combine plots into single figures with subplots"
-    )
-
-    parser.add_argument(
-        "--logs_dir",
-        type=str,
-        default="ordinary_steering_logs",
-        help="Directory containing the logs (default: ordinary_steering_logs)",
-    )
-
-    parser.add_argument(
-        "--run_dir",
-        type=str,
-        default=None,
-        help="Specific run directory to process (default: most recent run)",
-    )
-
-    parser.add_argument(
-        "--output_dir",
-        type=str,
-        default=None,
-        help="Directory to save combined plots (default: <run_dir>/combined_plots)",
-    )
-
-    parser.add_argument(
-        "--group_by",
-        type=str,
-        choices=["directory", "metric", "strategy", "layer"],
-        default="directory",
-        help="How to group plots (default: directory)",
-    )
-
-    parser.add_argument(
-        "--max_per_figure",
-        type=int,
-        default=9,
-        help="Maximum number of subplots per figure (default: 9)",
-    )
-
-    return parser.parse_args()
-
-
-def find_most_recent_run(logs_dir):
-    """Find the most recent run directory."""
-    runs = glob.glob(os.path.join(logs_dir, "run_with_steering_*"))
-    if not runs:
-        return None
-
-    # Sort by modification time (most recent first)
-    return sorted(runs, key=os.path.getmtime, reverse=True)[0]
 
 
 def get_plot_files(plot_dir):
@@ -176,7 +121,22 @@ def group_plots_by_layer(plot_files):
     return layer_groups
 
 
-def extract_plot_metadata(img_path):
+def process_groups(groups, output_dir, max_per_figure):
+    """Process each group and create combined plots."""
+    os.makedirs(output_dir, exist_ok=True)
+
+    for group_name, files in groups.items():
+        if len(files) <= 1:
+            print(f"Skipping group '{group_name}' as it has only {len(files)} files")
+            continue
+
+        output_path = os.path.join(output_dir, f"combined_{group_name}")
+        _combine_images_into_subplots(
+            files, output_path, max_per_figure, title=group_name
+        )
+
+
+def _extract_plot_metadata(img_path):
     """Extract useful metadata from a plot file path to create more informative titles."""
     filename = os.path.basename(img_path)
     parent_dir = os.path.basename(os.path.dirname(img_path))
@@ -275,7 +235,7 @@ def extract_plot_metadata(img_path):
     }
 
 
-def combine_images_into_subplots(
+def _combine_images_into_subplots(
     image_files, output_path, max_per_figure=9, title=None
 ):
     """Combine multiple images into a single figure with subplots."""
@@ -313,7 +273,7 @@ def combine_images_into_subplots(
             ax = plt.subplot(n_rows, n_cols, i + 1)
 
             # Extract metadata for better title
-            metadata = extract_plot_metadata(img_path)
+            metadata = _extract_plot_metadata(img_path)
             all_metadata.append(metadata)
 
             # Load and display image
@@ -363,8 +323,8 @@ def combine_images_into_subplots(
         # Add summary table
         if all_metadata:
             # Create comparison text to highlight what differs between plots
-            key_differences = identify_key_differences(all_metadata)
-            comparison_text = generate_comparison_text(all_metadata, key_differences)
+            key_differences = _identify_key_differences(all_metadata)
+            comparison_text = _generate_comparison_text(all_metadata, key_differences)
 
             # Add the comparison text as a table at the bottom
             plt.figtext(
@@ -394,7 +354,7 @@ def combine_images_into_subplots(
         print(f"Saved combined figure to {output_file}")
 
 
-def identify_key_differences(metadata_list):
+def _identify_key_differences(metadata_list):
     """Identify which attributes differ across the metadata list."""
     if not metadata_list:
         return []
@@ -412,7 +372,7 @@ def identify_key_differences(metadata_list):
     return key_differences
 
 
-def generate_comparison_text(metadata_list, key_differences):
+def _generate_comparison_text(metadata_list, key_differences):
     """Generate a comparison text highlighting the key differences."""
     if not metadata_list or not key_differences:
         return "Plots show similar conditions."
@@ -469,73 +429,3 @@ def generate_comparison_text(metadata_list, key_differences):
         rows.extend([f"• {prop}" for prop in common_props])
 
     return "\n".join(rows)
-
-
-def process_groups(groups, output_dir, max_per_figure):
-    """Process each group and create combined plots."""
-    os.makedirs(output_dir, exist_ok=True)
-
-    for group_name, files in groups.items():
-        if len(files) <= 1:
-            print(f"Skipping group '{group_name}' as it has only {len(files)} files")
-            continue
-
-        output_path = os.path.join(output_dir, f"combined_{group_name}")
-        combine_images_into_subplots(
-            files, output_path, max_per_figure, title=group_name
-        )
-
-
-def main():
-    args = parse_args()
-
-    # Find run directory
-    if args.run_dir:
-        run_dir = args.run_dir
-    else:
-        run_dir = find_most_recent_run(args.logs_dir)
-        if not run_dir:
-            print(f"No run directories found in {args.logs_dir}")
-            return
-
-    print(f"Processing run directory: {run_dir}")
-
-    # Find plot directory
-    plot_dir = os.path.join(run_dir, "plots")
-    if not os.path.exists(plot_dir):
-        print(f"Plot directory not found: {plot_dir}")
-        return
-
-    # Set output directory
-    if args.output_dir:
-        output_dir = args.output_dir
-    else:
-        output_dir = os.path.join(run_dir, "combined_plots")
-
-    os.makedirs(output_dir, exist_ok=True)
-    print(f"Combined plots will be saved to: {output_dir}")
-
-    # Get all plot files
-    plot_files = get_plot_files(plot_dir)
-    print(f"Found {len(plot_files)} plot files")
-
-    # Group plots according to the chosen method
-    if args.group_by == "directory":
-        groups = group_plots_by_directory(plot_files)
-    elif args.group_by == "metric":
-        groups = group_plots_by_metric(plot_files)
-    elif args.group_by == "strategy":
-        groups = group_plots_by_strategy(plot_files)
-    elif args.group_by == "layer":
-        groups = group_plots_by_layer(plot_files)
-
-    print(f"Grouped plots into {len(groups)} {args.group_by} groups")
-
-    # Process each group
-    process_groups(groups, output_dir, args.max_per_figure)
-
-    print("Done! Combined plots have been created.")
-
-
-if __name__ == "__main__":
-    main()

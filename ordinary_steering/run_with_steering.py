@@ -25,9 +25,10 @@ from combine_plots import (
     process_groups,
 )
 from torch.utils.data import DataLoader
+from tqdm import tqdm
 from tr_data_utils import load_data
 from tr_training_w_steering import (
-    generate_visualizations,
+    analyze_steering_experiment_results,
     train_ccs_with_steering_strategies,
 )
 from transformers import AutoModel, AutoTokenizer
@@ -110,6 +111,17 @@ def main():
     # Parse arguments
     args = parse_args()
 
+    print("🚀 Starting CCS + Steering Experiment")
+    print("=" * 50)
+    print("📋 Experiment Configuration:")
+    print(f"   Model: {args.model_name}")
+    print(f"   Layers: {args.n_layers}")
+    print(f"   Epochs per CCS: {args.n_epochs}")
+    print(f"   Steering coefficients: {args.steering_coefficients}")
+    print(f"   Embedding strategies: {args.embedding_strategies}")
+    print(f"   Output directory: {args.output_dir}")
+    print("=" * 50)
+
     # Set output directory
     if args.output_dir is None:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -123,46 +135,53 @@ def main():
 
     # Set device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"Using device: {device}")
+    print(f"🖥️  Using device: {device}")
 
     # Load model and tokenizer
-    print(f"Loading model: {args.model_name}")
-    # # Fall back to standard model loading (for encoder models)
-    model = AutoModel.from_pretrained(args.model_name)
-    tokenizer = AutoTokenizer.from_pretrained(args.model_name)
+    print(f"📦 Loading model: {args.model_name}")
+    with tqdm(desc="Loading model", unit="step") as pbar:
+        model = AutoModel.from_pretrained(args.model_name)
+        pbar.update(1)
+        pbar.set_description("Loading tokenizer")
+        tokenizer = AutoTokenizer.from_pretrained(args.model_name)
+        pbar.update(1)
 
     # Move model to device
+    print(f"🔄 Moving model to {device}...")
     model = model.to(device)
     model.eval()  # Set to evaluation mode
 
     # Print model information
-    print(f"Model type: {model.config.model_type}")
-    print(f"Number of layers: {args.n_layers}")
+    print("🔍 Model Information:")
+    print(f"   Type: {model.config.model_type}")
+    print(f"   Layers to analyze: {args.n_layers}")
 
     # Load data
-    print(f"Loading data from: {args.data_dir}")
-    train_dataset, val_dataset, test_dataset = load_data(
-        data_dir=args.data_dir, dataset_type="hate_vs_antagonist"
-    )
+    print(f"📚 Loading data from: {args.data_dir}")
+    with tqdm(desc="Loading datasets", unit="dataset") as pbar:
+        train_dataset, val_dataset, test_dataset = load_data(
+            data_dir=args.data_dir, dataset_type="hate_vs_antagonist"
+        )
+        pbar.update(1)
 
     # Create DataLoaders
+    print("🔄 Creating data loaders...")
     train_dataloader = DataLoader(
         train_dataset, batch_size=args.batch_size, shuffle=True
     )
-
     val_dataloader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False)
-
     test_dataloader = DataLoader(
         test_dataset, batch_size=args.batch_size, shuffle=False
     )
 
     # Print dataset information
-    print(f"Train dataset size: {len(train_dataset)}")
-    print(f"Validation dataset size: {len(val_dataset)}")
-    print(f"Test dataset size: {len(test_dataset)}")
+    print("📊 Dataset Information:")
+    print(f"   Train dataset size: {len(train_dataset)}")
+    print(f"   Validation dataset size: {len(val_dataset)}")
+    print(f"   Test dataset size: {len(test_dataset)}")
 
     # Run CCS with steering
-    print("Starting CCS training with steering applied before training...")
+    print("\n🧪 Starting CCS training with steering applied before training...")
     all_results = train_ccs_with_steering_strategies(
         model=model,
         tokenizer=tokenizer,
@@ -179,32 +198,27 @@ def main():
     )
 
     # Print completion message
-    print(f"Training complete! Results saved to {args.output_dir}")
+    print(f"\n🎉 Training complete! Results saved to {args.output_dir}")
 
-    # Generate visualizations separately
-    print("\nGenerating visualizations...")
-    plot_dir = os.path.join(args.output_dir, "plots")
-    generate_visualizations(
-        all_results,
-        plot_dir,
-        args.embedding_strategies,
-        [
-            ("combined", "Hate + Safe No → Safe + Hate No"),
-            ("hate_yes_to_safe_yes", "Hate Yes → Safe Yes"),
-            ("safe_no_to_hate_no", "Safe No → Hate No"),
-            ("hate_yes_to_hate_no", "Hate Yes → Hate No"),
-            ("safe_yes_to_safe_no", "Safe Yes → Safe No"),
-        ],
-        args.steering_coefficients,
-        args.n_layers,
-        model=model,
-        tokenizer=tokenizer,
-        train_dataloader=train_dataloader,
-        device=device,
+    # Analyze steering experiment results
+    print("\n" + "=" * 60)
+    print("ANALYZING STEERING EXPERIMENT RESULTS")
+    print("=" * 60)
+
+    analyze_steering_experiment_results(
+        all_results=all_results,
+        steering_coefficients=args.steering_coefficients,
+        n_layers=args.n_layers,
     )
 
+    print("\nKey Insights:")
+    print("- Look for layers where steering preserves high CCS accuracy")
+    print("- Compare how different steering strengths affect truth detection")
+    print("- Check if hate content becomes more similar to safe content")
+    print("- This experiment tests: Can we change semantics without breaking logic?")
+
     # Print metrics summary
-    print("\nMetrics Summary:")
+    print("\n📊 Metrics Summary:")
     for strategy in args.embedding_strategies:
         print(f"\nStrategy: {strategy}")
         for layer_idx in range(args.n_layers):
@@ -227,7 +241,7 @@ def main():
                 print(f"    Coef {coef}: Avg Accuracy = {avg_acc:.4f}")
 
     # Automatically combine plots
-    print("\nCombining plots for easier visualization...")
+    print("\n🖼️  Combining plots for easier visualization...")
     plot_dir = os.path.join(args.output_dir, "plots")
 
     if os.path.exists(plot_dir):
@@ -247,25 +261,30 @@ def main():
         print(f"Found {len(plot_files)} plot files to combine")
 
         if plot_files:
-            # Group and process plots by directory
-            print("Grouping plots by directory...")
-            groups = group_plots_by_directory(plot_files)
-            process_groups(groups, combined_dirs["directory"], max_per_figure=9)
+            with tqdm(total=4, desc="Combining plots", unit="group") as pbar:
+                # Group and process plots by directory
+                print("Grouping plots by directory...")
+                groups = group_plots_by_directory(plot_files)
+                process_groups(groups, combined_dirs["directory"], max_per_figure=9)
+                pbar.update(1)
 
-            # Group and process plots by metric
-            print("Grouping plots by metric...")
-            groups = group_plots_by_metric(plot_files)
-            process_groups(groups, combined_dirs["metric"], max_per_figure=9)
+                # Group and process plots by metric
+                print("Grouping plots by metric...")
+                groups = group_plots_by_metric(plot_files)
+                process_groups(groups, combined_dirs["metric"], max_per_figure=9)
+                pbar.update(1)
 
-            # Group and process plots by strategy
-            print("Grouping plots by strategy...")
-            groups = group_plots_by_strategy(plot_files)
-            process_groups(groups, combined_dirs["strategy"], max_per_figure=9)
+                # Group and process plots by strategy
+                print("Grouping plots by strategy...")
+                groups = group_plots_by_strategy(plot_files)
+                process_groups(groups, combined_dirs["strategy"], max_per_figure=9)
+                pbar.update(1)
 
-            # Group and process plots by layer
-            print("Grouping plots by layer...")
-            groups = group_plots_by_layer(plot_files)
-            process_groups(groups, combined_dirs["layer"], max_per_figure=9)
+                # Group and process plots by layer
+                print("Grouping plots by layer...")
+                groups = group_plots_by_layer(plot_files)
+                process_groups(groups, combined_dirs["layer"], max_per_figure=9)
+                pbar.update(1)
 
             print("Combined plots have been saved to:")
             for group_by, dir_path in combined_dirs.items():
@@ -275,7 +294,7 @@ def main():
     else:
         print(f"Plot directory not found: {plot_dir}")
 
-    print("\nAll processing complete!")
+    print("\n✅ All processing complete!")
 
 
 if __name__ == "__main__":
