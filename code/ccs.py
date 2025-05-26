@@ -153,7 +153,6 @@ class CCS(object):
 
     #     return precision, recall
 
-
     def get_silhouette(self, x0_test, x1_test):
 
         predictions, _ = self.predict(x0_test, x1_test)
@@ -381,7 +380,7 @@ def train_ccs_on_hidden_states(X_pos, X_neg, y_vec, train_idx,
         ccs.repeated_train()
 
         # Оценка
-        predictions, conf = ccs.predict(X_neg_test_layer, X_pos_test_layer, y_test.values)
+        predictions, conf = ccs.predict(X_neg_test_layer, X_pos_test_layer)
         if len(np.unique(predictions)) == 1:
           s_score = 0
         else:
