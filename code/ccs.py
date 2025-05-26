@@ -384,7 +384,7 @@ def train_ccs_on_hidden_states(X_pos, X_neg, y_vec, train_idx,
         if len(np.unique(predictions)) == 1:
           s_score = 0
         else:
-          s_score = ccs.get_silhouette(X_neg_test_layer, X_pos_test_layer, y_test.values)
+          s_score = ccs.get_silhouette(X_neg_test_layer, X_pos_test_layer)
         ccs_acc = ccs.get_acc(X_neg_test_layer, X_pos_test_layer, y_test.values)
 
        # ccs_precision, ccs_recall = ccs.get_pr_rec(X_neg_test_layer, X_pos_test_layer, y_test.values)
