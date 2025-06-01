@@ -4,6 +4,7 @@ import torch.nn.functional as F
 import torch.optim as optim
 import numpy as np
 import copy
+from sklearn.model_selection import train_test_split
 import random
 
 from sklearn.metrics import silhouette_score, accuracy_score, precision_score, recall_score
@@ -412,6 +413,123 @@ def train_ccs_on_hidden_states(X_pos, X_neg, y_vec, train_idx,
                               'silhouette' : s_score,
                               'agreement' : ccs_agreement,
                               'contradiction idx' : ccs_ci,
+                              'IM dist': ccs_ideal_dist,
+                             'weights' : ccs.get_weights()[0],
+                              'bias' : ccs.get_weights()[1]}
+    return results
+
+def train_half_ccs_on_hidden_states(X_pos, X_neg, y_vec, random_state=71, lambda_classification=0.0, normalize=True, device=None):
+    """
+    Train CCS for each layer and get results 
+
+    Parameters:
+        X_pos (np.ndarray): Positive (yes) samples, shape (N, n_layers, hidden_dim). Must be raw (not normalized after extraction)
+        X_neg (np.ndarray): Negative (no) samples, shape (N, n_layers, hidden_dim). Must be raw (not normalized after extraction)
+        y_vec (np.ndarray): y labels 
+        train_idx (np.ndarray): train indexes
+        test_idx (np.ndarray): test indexes
+
+        random_state (int): Random seed.
+        lambda_classification (float): BCE weight
+        
+        normalize (bool): if True then training data normalized with formula X - X.mean(0) else raw data is used 
+        (only if you have normalization before)
+
+    Returns:
+        results (dict): dict {layer number: {'accuracy': ccs_acc,
+                              'silhouette' : s_score,
+                              'agreement' : ccs_agreement,
+                              'contradiction idx' : ccs_ci,
                               'IM dist': ccs_ideal_dist}
+ }.
+    """
+    n_samples, n_layers, hidden_dim = X_pos.shape
+    results = {}
+
+    if normalize:
+        X_pos = X_pos - X_pos.mean(0)
+        X_neg = X_neg - X_neg.mean(0)
+
+    all_idx = np.arange(len(X_pos)//2) # All idxs 
+
+    train_idx, test_idx = train_test_split(all_idx, test_size=0.15, random_state=71, shuffle=True)
+
+    first_pos_cluster = X_pos[:len(X_pos)//2, :]
+    second_pos_cluster = X_pos[len(X_pos)//2:, :]
+
+    first_neg_cluster = X_neg[:len(X_neg)//2, :]
+    second_neg_cluster = X_neg[len(X_neg)//2:, :]
+
+
+    for layer_idx in range(n_layers):
+
+        # first cluster pos
+        X_pos_first_cluster_train_layer = first_pos_cluster[train_idx, layer_idx, :].astype(np.float32) # (train_samples, hidden_dim)
+        X_pos_first_cluster_test_layer = first_pos_cluster[test_idx, layer_idx, :].astype(np.float32)
+
+        # second cluster pos
+        X_pos_second_cluster_train_layer = second_pos_cluster[train_idx, layer_idx, :].astype(np.float32) # (train_samples, hidden_dim)
+        X_pos_second_cluster_test_layer = second_pos_cluster[test_idx, layer_idx, :].astype(np.float32)
+
+        # first cluster neg
+        X_neg_first_cluster_train_layer = first_neg_cluster[train_idx, layer_idx, :].astype(np.float32) # (train_samples, hidden_dim)
+        X_neg_first_cluster_test_layer = first_neg_cluster[test_idx, layer_idx, :].astype(np.float32)
+
+        # second cluster neg
+        X_neg_second_cluster_train_layer = second_neg_cluster[train_idx, layer_idx, :].astype(np.float32) # (train_samples, hidden_dim)
+        X_neg_second_cluster_test_layer = second_neg_cluster[test_idx, layer_idx, :].astype(np.float32)
+
+
+        # y first
+        y_first = y_vec[:len(X_neg)//2]
+        y_second = y_vec[len(X_neg)//2:]
+       
+        # y first
+        y_train_first = y_first[train_idx].astype(np.float32)
+        y_test_first = y_first[test_idx].astype(np.float32)
+        
+        # y second
+        y_train_second = y_second[train_idx].astype(np.float32)
+        y_test_second = y_second[test_idx].astype(np.float32)
+
+
+
+        ccs_first = CCS(X_neg_first_cluster_train_layer, X_pos_first_cluster_train_layer, y_train_first, 
+                        var_normalize=False, lambda_classification=lambda_classification, device=device)
+        ccs_first.repeated_train()
+
+        ccs_second = CCS(X_neg_second_cluster_train_layer, X_pos_second_cluster_train_layer, y_train_second, 
+                        var_normalize=False, lambda_classification=lambda_classification, device=device)
+        ccs_second.repeated_train()
+
+
+        # Оценка
+        predictions_first, conf_first = ccs_first.predict(X_neg_first_cluster_test_layer, X_pos_first_cluster_test_layer)
+        predictions_second, conf_second = ccs_first.predict(X_neg_first_cluster_test_layer, X_pos_first_cluster_test_layer)
+
+        if len(np.unique(predictions_first)) == 1:
+            s_score_f = 0
+        else:
+            s_score_f = ccs_first.get_silhouette(X_neg_first_cluster_test_layer, X_pos_first_cluster_test_layer)
+
+        if len(np.unique(predictions_second)) == 1:
+            s_score_s = 0
+        
+        else:
+            s_score_s = ccs_second.get_silhouette(X_neg_second_cluster_test_layer, X_pos_second_cluster_test_layer)
+
+        weights_f = ccs_first.get_weights()
+        weights_s = ccs_second.get_weights()
+
+        print(f'Layer : {layer_idx}/{n_layers} finished')
+
+
+
+        # Save result
+        results[layer_idx] = {'s_score_f': s_score_f,
+                              's_score_s': s_score_s,
+                              'weights_f' : weights_f, 
+                              'weights_s' : weights_s
+                              }
 
     return results
