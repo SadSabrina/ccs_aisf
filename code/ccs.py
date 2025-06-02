@@ -418,7 +418,7 @@ def train_ccs_on_hidden_states(X_pos, X_neg, y_vec, train_idx,
                               'bias' : ccs.get_weights()[1]}
     return results
 
-def train_half_ccs_on_hidden_states(X_pos, X_neg, y_vec, random_state=71, lambda_classification=0.0, normalize=True, device=None):
+def train_half_ccs_on_hidden_states(X_pos, X_neg, y_vec, random_state=71, lambda_classification=0.0, weight_decay=0.01, normalize=True, device=None):
     """
     Train CCS for each layer and get results 
 
@@ -495,11 +495,11 @@ def train_half_ccs_on_hidden_states(X_pos, X_neg, y_vec, random_state=71, lambda
 
 
         ccs_first = CCS(X_neg_first_cluster_train_layer, X_pos_first_cluster_train_layer, y_train_first, 
-                        var_normalize=False, lambda_classification=lambda_classification, device=device)
+                        var_normalize=False, weight_decay=weight_decay, lambda_classification=lambda_classification, device=device)
         ccs_first.repeated_train()
 
         ccs_second = CCS(X_neg_second_cluster_train_layer, X_pos_second_cluster_train_layer, y_train_second, 
-                        var_normalize=False, lambda_classification=lambda_classification, device=device)
+                        var_normalize=False, weight_decay=weight_decay, lambda_classification=lambda_classification, device=device)
         ccs_second.repeated_train()
 
 
