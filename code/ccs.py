@@ -5,6 +5,7 @@ import torch.optim as optim
 import numpy as np
 import copy
 from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import normalize
 import random
 
 from sklearn.metrics import silhouette_score, accuracy_score, precision_score, recall_score
@@ -330,7 +331,7 @@ def train_lr_on_hidden_states(X_pos, X_neg, y_vec, train_idx, test_idx, random_s
     return results
 
 def train_ccs_on_hidden_states(X_pos, X_neg, y_vec, train_idx, 
-                               test_idx, random_state=71, lambda_classification=0.0, normalize=True, device=None):
+                               test_idx, random_state=71, lambda_classification=0.0, normalize='mean', device=None):
     """
     Train CCS for each layer and get results 
 
@@ -344,8 +345,16 @@ def train_ccs_on_hidden_states(X_pos, X_neg, y_vec, train_idx,
         random_state (int): Random seed.
         lambda_classification (float): BCE weight
         
-        normalize (bool): if True then training data normalized with formula X - X.mean(0) else raw data is used 
-        (only if you have normalization before)
+        normalize (str): {'mean', 'median', 'l2', 'raw', None}
+               — mean 
+               X_train := X_train - X_train.mean(axis=0) 
+               X_test  := X_test  - X_train.mean(axis=0)
+               - median
+               X_train := X_train - X_train.median(axis=0)  
+               X_test  := X_test  - X_train.median(axis=0)
+               - l2 
+                X := X / ||X||₂
+                - raw or None — without normalization
 
     Returns:
         results (dict): dict {layer number: {'accuracy': ccs_acc,
@@ -358,10 +367,6 @@ def train_ccs_on_hidden_states(X_pos, X_neg, y_vec, train_idx,
     n_samples, n_layers, hidden_dim = X_pos.shape
     results = {}
 
-    if normalize:
-        X_pos = X_pos - X_pos.mean(0)
-        X_neg = X_neg - X_neg.mean(0)
-
 
     for layer_idx in range(n_layers):
 
@@ -372,6 +377,36 @@ def train_ccs_on_hidden_states(X_pos, X_neg, y_vec, train_idx,
         # X negative (no)
         X_neg_train_layer = X_neg[train_idx, layer_idx, :].astype(np.float32)
         X_neg_test_layer = X_neg[test_idx, layer_idx, :].astype(np.float32)
+
+        if normalize == 'mean':
+            X_pos_train_mean = X_pos_train_layer.mean(0)
+            X_neg_train_mean = X_neg_train_layer.mean(0)
+
+            X_pos_train_layer = X_pos_train_layer - X_pos_train_mean
+            X_pos_test_layer =X_pos_test_layer - X_pos_train_mean
+
+            X_neg_train_layer = X_neg_train_layer - X_neg_train_mean
+            X_neg_test_layer =X_neg_test_layer - X_neg_train_mean
+
+        if normalize == 'median':
+            X_pos_train_median = np.median(X_pos_train_layer, 0)
+            X_neg_train_median = np.median(X_neg_train_layer, 0)
+
+            X_pos_train_layer = X_pos_train_layer - X_pos_train_median
+            X_pos_test_layer =X_pos_test_layer - X_pos_train_median
+
+            X_neg_train_layer = X_neg_train_layer - X_neg_train_median
+            X_neg_test_layer =X_neg_test_layer - X_neg_train_median
+
+        if normalize == 'l2':
+            X_pos_train_layer = normalize(X_pos_train_layer, norm='l2', axis=1)
+            X_neg_train_layer = normalize(X_neg_train_layer, norm='l2', axis=1)
+
+            X_pos_test_layer = normalize(X_pos_test_layer, norm='l2', axis=1)
+            X_neg_test_layer = normalize(X_neg_test_layer, norm='l2', axis=1)
+
+        if normalize == None or normalize == 'raw':
+            pass
 
         # y vector
         y_train = y_vec[train_idx].astype(np.float32)
