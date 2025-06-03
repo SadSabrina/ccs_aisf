@@ -331,7 +331,7 @@ def train_lr_on_hidden_states(X_pos, X_neg, y_vec, train_idx, test_idx, random_s
     return results
 
 def train_ccs_on_hidden_states(X_pos, X_neg, y_vec, train_idx, 
-                               test_idx, random_state=71, lambda_classification=0.0, normalize='mean', device=None):
+                               test_idx, random_state=71, lambda_classification=0.0, normalizing='mean', device=None):
     """
     Train CCS for each layer and get results 
 
@@ -378,7 +378,7 @@ def train_ccs_on_hidden_states(X_pos, X_neg, y_vec, train_idx,
         X_neg_train_layer = X_neg[train_idx, layer_idx, :].astype(np.float32)
         X_neg_test_layer = X_neg[test_idx, layer_idx, :].astype(np.float32)
 
-        if normalize == 'mean':
+        if normalizing == 'mean':
             X_pos_train_mean = X_pos_train_layer.mean(0)
             X_neg_train_mean = X_neg_train_layer.mean(0)
 
@@ -388,7 +388,7 @@ def train_ccs_on_hidden_states(X_pos, X_neg, y_vec, train_idx,
             X_neg_train_layer = X_neg_train_layer - X_neg_train_mean
             X_neg_test_layer =X_neg_test_layer - X_neg_train_mean
 
-        if normalize == 'median':
+        if normalizing == 'median':
             X_pos_train_median = np.median(X_pos_train_layer, 0)
             X_neg_train_median = np.median(X_neg_train_layer, 0)
 
@@ -398,14 +398,14 @@ def train_ccs_on_hidden_states(X_pos, X_neg, y_vec, train_idx,
             X_neg_train_layer = X_neg_train_layer - X_neg_train_median
             X_neg_test_layer =X_neg_test_layer - X_neg_train_median
 
-        if normalize == 'l2':
+        if normalizing == 'l2':
             X_pos_train_layer = normalize(X_pos_train_layer, norm='l2', axis=1)
             X_neg_train_layer = normalize(X_neg_train_layer, norm='l2', axis=1)
 
             X_pos_test_layer = normalize(X_pos_test_layer, norm='l2', axis=1)
             X_neg_test_layer = normalize(X_neg_test_layer, norm='l2', axis=1)
 
-        if normalize == None or normalize == 'raw':
+        if normalizing == None or normalize == 'raw':
             pass
 
         # y vector
