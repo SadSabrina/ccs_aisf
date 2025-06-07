@@ -68,7 +68,7 @@ class CCS(object):
     """
 
     def __init__(self, x0, x1, y_train=None, nepochs=1500, ntries=10, lr=0.015, batch_size=-1,
-                 device=None, linear=True, weight_decay=0.01, var_normalize=False, lambda_classification=0.0):
+                 device=None, linear=True, weight_decay=0.01, var_normalize=False, lambda_classification=0.0, predict_normalize=False):
         if device is None:
             device = torch.device("cuda" if torch.cuda.is_available() else "cpu")  
             self.device = device
@@ -130,9 +130,14 @@ class CCS(object):
         return informative_loss + consistent_loss
 
 
-    def predict(self, x0_test, x1_test):
-        x0 = torch.tensor(self.normalize(x0_test), dtype=torch.float32, device=self.device)
-        x1 = torch.tensor(self.normalize(x1_test), dtype=torch.float32, device=self.device)
+    def predict(self, x0_test, x1_test, predict_normalize=False):
+        
+        if predict_normalize:
+            x0_test = self.normalize(x0_test)
+            x1_test = self.normalize(x1_test)
+
+        x0 = torch.tensor(x0_test, dtype=torch.float32, device=self.device)
+        x1 = torch.tensor(x1_test, dtype=torch.float32, device=self.device)
         with torch.no_grad():
             p0, p1 = self.best_probe(x0), self.best_probe(x1)
         avg_confidence = 0.5 * (p0 + (1 - p1))
