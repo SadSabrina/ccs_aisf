@@ -1,6 +1,9 @@
 .DS_Store
 code/.DS_Store
+code/__pycache__
 llama_13b.pkl
 llama_13b_is_real.pkl
 llama_3b.pkl
 llama_3b_is_real.pkl
+ccs_venv
+test_files
