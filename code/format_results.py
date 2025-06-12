@@ -1,6 +1,7 @@
 import matplotlib.pyplot as plt
 import seaborn as sns
 import pandas as pd
+import numpy as np
 from sklearn.decomposition import PCA
 from sklearn.manifold import TSNE
 
@@ -88,3 +89,27 @@ def plot_pca_or_tsne_layerwise(X_pos, X_neg, hue, standardize=True, reshape= Non
     fig.suptitle(plot_title, fontsize=16)
 
     return fig
+
+
+def get_results_table(ccs_results):
+
+  acc_list = []
+  agreement_list = []
+  agreement_abs_list = []
+  s_score = []
+  ci_list = []
+  im_dist_list = []
+
+  for layer in ccs_results.keys():
+    acc_list.append(ccs_results[layer]['accuracy'])
+    s_score.append(ccs_results[layer]['silhouette'])
+    agreement_list.append(np.mean(ccs_results[layer]['agreement']))
+    agreement_abs_list.append(np.median(np.abs(ccs_results[layer]['agreement'])))
+    ci_list.append(np.mean(ccs_results[layer]['contradiction idx']))
+    im_dist_list.append(np.mean(ccs_results[layer]['IM dist']))
+
+  data = pd.DataFrame(index=ccs_results.keys(),
+                      data=np.array([acc_list, s_score, agreement_list, agreement_abs_list, ci_list, im_dist_list]).T,
+                      columns = ['accuracy', 'silhouette_score', 'agreement_score_↓', 'abs_agreement_score', 'contradiction_idx_↓', 'ideal_model_dist_↓'])
+
+  return data

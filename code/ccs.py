@@ -577,3 +577,63 @@ def train_half_ccs_on_hidden_states(X_pos, X_neg, y_vec, random_state=71, lambda
                               }
 
     return results
+
+def train_lr_on_hidden_states(X_pos, X_neg, y_vec, train_idx, test_idx, random_state=71):
+    """
+    Train baseline (logistic regression) on hidden states
+
+    Parameters:
+        X_pos (np.ndarray): Positive statements shape (N, n_layers, hidden_dim).
+        X_neg (np.ndarray): Negatize statements, shape (N, n_layers, hidden_dim).
+        train_idx (np.ndarray): train indexes
+        test_idx (np.ndarray): test indexes
+
+        random_state (int): Random seed.
+
+    Returns:
+        results (dict): Dict {Layer number: {'Test Accuracy': ,
+                               'Test Silhouette score' :}}.
+    """
+    n_samples, n_layers, hidden_dim = X_pos.shape
+    results = {}
+
+    X_pos = X_pos - X_pos.mean(0)
+    X_neg = X_neg - X_neg.mean(0)
+
+
+    for layer_idx in range(n_layers):
+
+        # X_pos, X_neg train test split
+        X_pos_train_layer = X_pos[train_idx, layer_idx, :]  # (train_samples, hidden_dim)
+        X_pos_test_layer = X_pos[test_idx, layer_idx, :]
+
+        X_neg_train_layer = X_neg[train_idx, layer_idx, :]
+        X_neg_test_layer = X_neg[test_idx, layer_idx, :]
+
+        # y vector
+        y_train = y_vec[train_idx]
+        y_test = y_vec[test_idx]
+
+        # Preparing to LR training
+        X_train_layer = (X_pos_train_layer - X_neg_train_layer)
+        X_test_layer  = (X_pos_test_layer - X_neg_test_layer)
+
+        # Train Lr
+        clf = LogisticRegression(max_iter=1000, random_state=random_state)
+        clf.fit(X_train_layer, y_train)
+
+        # Predictions ans scoring (silhouette score only if lr found more that 1 class)
+        y_pred = clf.predict(X_test_layer)
+        acc = accuracy_score(y_test, y_pred)
+
+        if len(np.unique(y_pred)) == 1:
+          s_score = 0
+        else:
+          s_score = silhouette_score(X_test_layer, y_pred, metric='cosine')
+
+
+        # Save results
+        results[layer_idx] = {'Accuracy' : acc,
+                              'Silhouette' : s_score}
+
+    return results
