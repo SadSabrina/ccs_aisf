@@ -1,0 +1,9 @@
+2025-05-26 13:44:11,516 - INFO - ==================================================
+2025-05-26 13:44:11,516 - INFO - Starting new run with parameters:
+2025-05-26 13:44:11,516 - INFO - Model: distilbert-base-uncased
+2025-05-26 13:44:11,516 - INFO - Model Family: transformer
+2025-05-26 13:44:11,516 - INFO - Model Variant: distilbert-base-uncased
+2025-05-26 13:44:11,516 - INFO - Test Size: 0.3
+2025-05-26 13:44:11,516 - INFO - Random State: 42
+2025-05-26 13:44:11,516 - INFO - Device: cpu
+2025-05-26 13:44:11,516 - INFO - ==================================================

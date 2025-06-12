@@ -1,0 +1,17 @@
+
+================================================================================
+EXPERIMENT RESULTS SUMMARY
+================================================================================
+
+MODEL INFORMATION
+----------------------------------------
+Model Name: distilbert-base-uncased
+Model Family: transformer
+Model Variant: distilbert-base-uncased
+Number of Layers: 3
+Steering Coefficients: [0.0, 0.5, 1.0, 2.0, 5.0]
+
+LAYER-WISE RESULTS
+--------------------------------------------------------------------------------
+No layer-wise results available
+
