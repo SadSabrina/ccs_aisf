@@ -4,11 +4,13 @@ This file contains metrics specific to the CCS probe evaluation and analysis of
 internal model representations.
 """
 
-import warnings
-
-# Suppress specific warnings from scikit-learn PCA
-warnings.filterwarnings("ignore", message="invalid value encountered in matmul")
-warnings.filterwarnings("ignore", message="divide by zero encountered in matmul")
+# Suppress specific warnings from scikit-learn PCA and numerical operations
+# import warnings
+# warnings.filterwarnings("ignore", message="invalid value encountered in matmul")
+# warnings.filterwarnings("ignore", message="divide by zero encountered in matmul")
+# warnings.filterwarnings("ignore", category=RuntimeWarning)
+# warnings.filterwarnings("ignore", category=FutureWarning)
+# warnings.filterwarnings("ignore", category=UserWarning)
 
 import numpy as np
 import torch

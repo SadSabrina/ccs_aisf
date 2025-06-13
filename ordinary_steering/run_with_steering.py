@@ -2,10 +2,14 @@
 """
 Run Coefficient Controlled Steering with pre-steering approach
 
+CHANGED: Updated to use new separated logger and results_analyzer modules.
+No more plotting in logger - all analysis is properly separated.
+
 This script:
 1. Loads model and tokenizer
 2. Prepares data
 3. Runs CCS training with steering applied before training
+4. Uses separated modules for logging vs analysis/plotting
 """
 
 import argparse
@@ -15,8 +19,11 @@ from datetime import datetime
 import numpy as np
 import torch
 
+# CHANGED: Import separated modules instead of using logger for analysis
+from logger import log_results_summary, setup_logger
+
 # Import plot combination functions
-from combine_plots import (
+from logger_combine_plots import (
     get_plot_files,
     group_plots_by_directory,
     group_plots_by_layer,
@@ -133,6 +140,16 @@ def main():
     # Create output directory
     os.makedirs(args.output_dir, exist_ok=True)
 
+    # CHANGED: Set up logger using separated module (no plotting in logger)
+    logger, run_dir, log_base = setup_logger(
+        model_name=args.model_name,
+        model_family="transformer",
+        model_variant=args.model_name.split("/")[-1],
+        device=torch.device("cuda" if torch.cuda.is_available() else "cpu"),
+        test_size=0.3,
+        random_state=42,
+    )
+
     # Set device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"🖥️  Using device: {device}")
@@ -180,9 +197,9 @@ def main():
     print(f"   Validation dataset size: {len(val_dataset)}")
     print(f"   Test dataset size: {len(test_dataset)}")
 
-    # Run CCS with steering
+    # Run CCS with steering - CHANGED: Now returns both results and analysis
     print("\n🧪 Starting CCS training with steering applied before training...")
-    all_results = train_ccs_with_steering_strategies(
+    all_results, analysis_results = train_ccs_with_steering_strategies(
         model=model,
         tokenizer=tokenizer,
         train_dataloader=train_dataloader,
@@ -200,7 +217,21 @@ def main():
     # Print completion message
     print(f"\n🎉 Training complete! Results saved to {args.output_dir}")
 
-    # Analyze steering experiment results
+    # CHANGED: Use separated logger for basic logging (no plotting)
+    print("\n📝 Generating basic results summary...")
+    summary_str, summary_file, json_file = log_results_summary(
+        results=all_results,
+        steering_coefficients=args.steering_coefficients,
+        model_name=args.model_name,
+        model_family="transformer",
+        model_variant=args.model_name.split("/")[-1],
+        run_dir=args.output_dir,
+    )
+
+    print(f"📄 Summary saved to: {summary_file}")
+    print(f"📊 Detailed JSON saved to: {json_file}")
+
+    # Analyze steering experiment results - CHANGED: Now uses simple analysis
     print("\n" + "=" * 60)
     print("ANALYZING STEERING EXPERIMENT RESULTS")
     print("=" * 60)
@@ -218,27 +249,34 @@ def main():
     print("- This experiment tests: Can we change semantics without breaking logic?")
 
     # Print metrics summary
-    print("\n📊 Metrics Summary:")
+    print("\n📊 Quick Metrics Summary:")
     for strategy in args.embedding_strategies:
         print(f"\nStrategy: {strategy}")
         for layer_idx in range(args.n_layers):
             print(f"  Layer {layer_idx}:")
             for coef in args.steering_coefficients:
-                avg_acc = np.mean(
-                    [
-                        all_results[strategy][pair_name][layer_idx][coef][
-                            "metrics"
-                        ].get("accuracy", 0.0)
-                        for pair_name in all_results[strategy]
-                        if layer_idx in all_results[strategy][pair_name]
-                        and coef in all_results[strategy][pair_name][layer_idx]
-                        and "metrics"
-                        in all_results[strategy][pair_name][layer_idx][coef]
-                        and "accuracy"
-                        in all_results[strategy][pair_name][layer_idx][coef]["metrics"]
-                    ]
-                )
-                print(f"    Coef {coef}: Avg Accuracy = {avg_acc:.4f}")
+                # CHANGED: Added safety checks to prevent crashes
+                strategy_results = all_results.get(strategy, {})
+                if not strategy_results:
+                    print(f"    Coef {coef}: No data available")
+                    continue
+
+                accuracy_values = []
+                for pair_name in strategy_results:
+                    layer_results = strategy_results.get(pair_name, {})
+                    if layer_idx in layer_results and coef in layer_results[layer_idx]:
+                        coef_data = layer_results[layer_idx][coef]
+                        if (
+                            "metrics" in coef_data
+                            and "accuracy" in coef_data["metrics"]
+                        ):
+                            accuracy_values.append(coef_data["metrics"]["accuracy"])
+
+                if accuracy_values:
+                    avg_acc = np.mean(accuracy_values)
+                    print(f"    Coef {coef}: Avg Accuracy = {avg_acc:.4f}")
+                else:
+                    print(f"    Coef {coef}: No accuracy data available")
 
     # Automatically combine plots
     print("\n🖼️  Combining plots for easier visualization...")
@@ -294,7 +332,46 @@ def main():
     else:
         print(f"Plot directory not found: {plot_dir}")
 
+    # CHANGED: Show comprehensive analysis results
+    if analysis_results and "plot_paths" in analysis_results:
+        print(f"\n🎨 Generated {len(analysis_results['plot_paths'])} analysis plots")
+        print("📊 Comprehensive analysis completed!")
+
+        # Show which analysis plots were generated
+        print("\n📊 Analysis Plots Generated:")
+        for plot_name, plot_path in analysis_results["plot_paths"].items():
+            rel_path = os.path.relpath(plot_path, args.output_dir)
+            print(f"  - {plot_name}: {rel_path}")
+
+    print(f"\n📁 All results organized in: {args.output_dir}")
+    print("   ├── plots/ (individual plots)")
+    print("   ├── combined_plots_*/ (combined visualizations)")
+    print("   ├── models/ (trained CCS models)")
+    print("   ├── *.txt (summary files)")
+    print("   └── *.json (detailed results)")
+
+    # Final summary of what was accomplished
+    print("\n🎯 EXPERIMENT SUMMARY:")
+    print(f"   • Analyzed {args.n_layers} layers")
+    print(f"   • Tested {len(args.steering_coefficients)} steering coefficients")
+    print(f"   • Used {len(args.embedding_strategies)} embedding strategies")
+
+    total_experiments = (
+        args.n_layers * len(args.steering_coefficients) * len(args.embedding_strategies)
+    )
+    print(f"   • Conducted {total_experiments} total CCS training experiments")
+
+    if analysis_results:
+        effectiveness_results = analysis_results.get("effectiveness_analysis", {})
+        if effectiveness_results:
+            print("   • Generated effectiveness analysis for all layers")
+
+        plot_paths = analysis_results.get("plot_paths", {})
+        if plot_paths:
+            print(f"   • Created {len(plot_paths)} comprehensive analysis plots")
+
     print("\n✅ All processing complete!")
+    print("🔍 Check the output directory for comprehensive results and visualizations!")
 
 
 if __name__ == "__main__":

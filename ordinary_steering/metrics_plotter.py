@@ -1,10 +1,14 @@
 import os
-import warnings
 
-# Suppress specific warnings from scikit-learn PCA
-warnings.filterwarnings("ignore", message="invalid value encountered in matmul")
-warnings.filterwarnings("ignore", message="divide by zero encountered in matmul")
-
+# Suppress specific warnings from scikit-learn PCA and numerical operations
+# import warnings
+# warnings.filterwarnings("ignore", message="invalid value encountered in matmul")
+# warnings.filterwarnings("ignore", message="divide by zero encountered in matmul")
+# warnings.filterwarnings("ignore", category=RuntimeWarning)
+# # Remove VisibleDeprecationWarning since it may not be available in all NumPy versions
+# warnings.filterwarnings("ignore", category=FutureWarning)
+# # Silence all UserWarnings (commonly used for deprecation and configuration warnings)
+# warnings.filterwarnings("ignore", category=UserWarning)
 import matplotlib.pyplot as plt
 import numpy as np
 import seaborn as sns
@@ -158,12 +162,49 @@ def plot_performance_across_layers(results, metric="accuracy", save_path=None):
     """
     Plot performance metrics across model layers.
 
+    CHANGED: Fixed data structure handling to prevent 'str' object has no attribute 'keys' error
+
     Args:
-        results: List of results per layer
+        results: List of results per layer OR dictionary with layer results
         metric: Metric to plot (e.g., "accuracy", "loss")
         save_path: Path to save the plot
     """
     plt.figure(figsize=(10, 6))
+
+    # CHANGED: Better handling of different input formats
+    # Convert results to a consistent format
+    if isinstance(results, dict):
+        # If results is a dict, convert to list format
+        results_list = []
+        for layer_idx in sorted(results.keys()):
+            layer_result = results[layer_idx]
+            if isinstance(layer_result, dict):
+                # Ensure layer_idx is in the result
+                if "layer_idx" not in layer_result:
+                    layer_result["layer_idx"] = layer_idx
+                results_list.append(layer_result)
+        results = results_list
+
+    # Validate that results is now a list
+    if not isinstance(results, list):
+        print(f"Error: Expected list or dict, got {type(results)}")
+        return
+
+    # Validate each item in results is a dictionary
+    valid_results = []
+    for i, layer_result in enumerate(results):
+        if not isinstance(layer_result, dict):
+            print(
+                f"Warning: Layer result at index {i} is not a dictionary (type: {type(layer_result)}), skipping"
+            )
+            continue
+        valid_results.append(layer_result)
+
+    if not valid_results:
+        print("Error: No valid layer results found")
+        return
+
+    results = valid_results
 
     # Extract data
     layers = []
@@ -173,6 +214,10 @@ def plot_performance_across_layers(results, metric="accuracy", save_path=None):
     # Find all coefficients in the data
     all_coefficients = set()
     for layer_result in results:
+        # CHANGED: Added validation before calling .keys()
+        if not isinstance(layer_result, dict):
+            continue
+
         for key in layer_result.keys():
             if key.startswith("coef_"):
                 coef = key.split("_")[1]
@@ -182,35 +227,46 @@ def plot_performance_across_layers(results, metric="accuracy", save_path=None):
     all_coefficients = sorted(all_coefficients, key=lambda x: float(x))
 
     for layer_result in results:
-        layer_idx = layer_result["layer_idx"]
+        # CHANGED: Added validation
+        if not isinstance(layer_result, dict):
+            continue
+
+        layer_idx = layer_result.get("layer_idx", 0)
         layers.append(layer_idx)
 
         # Get baseline values (coefficient = 0.0)
+        baseline_value = None
         if (
             "final_metrics" in layer_result
+            and isinstance(layer_result["final_metrics"], dict)
             and "base_metrics" in layer_result["final_metrics"]
+            and isinstance(layer_result["final_metrics"]["base_metrics"], dict)
         ):
             if metric in layer_result["final_metrics"]["base_metrics"]:
-                baseline_values.append(
-                    layer_result["final_metrics"]["base_metrics"][metric]
-                )
-            else:
-                baseline_values.append(None)
-        else:
-            baseline_values.append(None)
+                baseline_value = layer_result["final_metrics"]["base_metrics"][metric]
+        elif "coef_0.0" in layer_result and isinstance(layer_result["coef_0.0"], dict):
+            if metric in layer_result["coef_0.0"]:
+                baseline_value = layer_result["coef_0.0"][metric]
+        elif "coef_0" in layer_result and isinstance(layer_result["coef_0"], dict):
+            if metric in layer_result["coef_0"]:
+                baseline_value = layer_result["coef_0"][metric]
+
+        baseline_values.append(baseline_value)
 
         # Get values for each coefficient
         for coef in all_coefficients:
             if f"coef_{coef}" not in coef_values:
                 coef_values[f"coef_{coef}"] = []
 
+            coef_value = None
             if (
                 f"coef_{coef}" in layer_result
+                and isinstance(layer_result[f"coef_{coef}"], dict)
                 and metric in layer_result[f"coef_{coef}"]
             ):
-                coef_values[f"coef_{coef}"].append(layer_result[f"coef_{coef}"][metric])
-            else:
-                coef_values[f"coef_{coef}"].append(None)
+                coef_value = layer_result[f"coef_{coef}"][metric]
+
+            coef_values[f"coef_{coef}"].append(coef_value)
 
     # Plot baseline if available
     if any(v is not None for v in baseline_values):
@@ -260,6 +316,25 @@ def plot_performance_across_layers(results, metric="accuracy", save_path=None):
         plt.close()
     else:
         plt.show()
+
+
+def safe_get_dict_keys(obj, description="object"):
+    """
+    Safely get keys from an object, with detailed error reporting.
+
+    CHANGED: Added helper function to prevent key access errors
+
+    Args:
+        obj: Object to get keys from
+        description: Description of the object for error messages
+
+    Returns:
+        List of keys or empty list if not a dict
+    """
+    if isinstance(obj, dict):
+        return list(obj.keys())
+    else:
+        raise ValueError(f"Expected {description} to be dict, got {type(obj)}")
 
 
 def plot_all_layer_vectors(results, save_dir):

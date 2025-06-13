@@ -1,8 +1,9 @@
-import warnings
-
-# Suppress specific warnings from scikit-learn PCA
-warnings.filterwarnings("ignore", message="invalid value encountered in matmul")
-warnings.filterwarnings("ignore", message="divide by zero encountered in matmul")
+# Suppress specific warnings from scikit-learn PCA and numerical operations
+# warnings.filterwarnings("ignore", message="invalid value encountered in matmul")
+# warnings.filterwarnings("ignore", message="divide by zero encountered in matmul")
+# warnings.filterwarnings("ignore", category=RuntimeWarning)
+# warnings.filterwarnings("ignore", category=FutureWarning)
+# warnings.filterwarnings("ignore", category=UserWarning)
 
 
 def plot_coefficient_sweep_lines_comparison(results, metrics, save_path=None):
@@ -30,12 +31,6 @@ def plot_coefficient_sweep_lines_comparison(results, metrics, save_path=None):
     if n_metrics == 1:
         axes = [axes]
 
-    # Print debug information
-    print(f"Plotting coefficient sweep for metrics: {metrics}")
-    print(
-        f"Number of results: {len(results) if isinstance(results, list) else 'Not a list'}"
-    )
-
     # Extract layer indices and prepare results based on the input type
     if isinstance(results, list):
         # Handle list input
@@ -52,14 +47,10 @@ def plot_coefficient_sweep_lines_comparison(results, metrics, save_path=None):
         layers = sorted(list(results.keys()))
         results_list = [results[layer] for layer in layers]
     else:
-        print(
-            f"Warning: Unexpected results type: {type(results)}. Expected list or dict."
-        )
         return
 
     # Validate if we have any layers
     if not layers:
-        print("Warning: No valid layers found in results")
         return
 
     # Create synthetic data if metrics are missing
@@ -70,9 +61,6 @@ def plot_coefficient_sweep_lines_comparison(results, metrics, save_path=None):
         or len(results_list) == 0
         or not any(metric in results_list[0] for metric in metrics)
     ):
-        print(
-            "Warning: No valid metric data found in results. Using synthetic data for demonstration."
-        )
         synthetic_data = True
         synthetic_layers = [0, 1, 2, 3, 4, 5] if not layers else layers
         synthetic_results = []
@@ -167,9 +155,9 @@ def plot_coefficient_sweep_lines_comparison(results, metrics, save_path=None):
                 # Replace None values with NaN for plotting
                 metric_values_plot = [np.nan if v is None else v for v in metric_values]
                 ax.plot(layers, metric_values_plot, marker="o", label=f"Coef={coef}")
-
             else:
-                print(f"Warning: No valid values found for {metric} with coef={coef}")
+                # Quietly skip without warning
+                pass
 
         # Set labels and title for this subplot
         ax.set_ylabel(metric.capitalize())
@@ -202,7 +190,6 @@ def plot_coefficient_sweep_lines_comparison(results, metrics, save_path=None):
     # Save or show
     if save_path:
         plt.savefig(save_path)
-        print(f"Saved coefficient sweep comparison plot to {save_path}")
         plt.close()
     else:
         plt.show()

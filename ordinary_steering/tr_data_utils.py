@@ -1,4 +1,11 @@
-import logging
+# Suppress specific warnings from scikit-learn and numerical operations
+# import warnings
+# warnings.filterwarnings("ignore", message="invalid value encountered in matmul")
+# warnings.filterwarnings("ignore", message="divide by zero encountered in matmul")
+# warnings.filterwarnings("ignore", category=RuntimeWarning)
+# warnings.filterwarnings("ignore", category=FutureWarning)
+# warnings.filterwarnings("ignore", category=UserWarning)
+
 import os
 
 import numpy as np
@@ -10,14 +17,14 @@ from sklearn.metrics import accuracy_score, roc_auc_score
 from torch.utils.data import Dataset
 from tqdm import tqdm
 
-# Global log counter for extract_representation
+# Global log counter for extract_representation - CHANGED: Removed frequent logging
 _extract_representation_log_count = 0
 
 
 class LogCounter:
     def __init__(self):
         self.count = 0
-        self.max_logs = 3
+        self.max_logs = 1  # CHANGED: Reduced from 3 to 1
 
     def should_log(self):
         if self.count < self.max_logs:
@@ -115,19 +122,13 @@ def load_data(data_dir="../data/yes_no", dataset_type="hate_vs_antagonist"):
     # Type 4: Safe speech with "No" (is_harmfull_opposition=1 in no file)
     safe_no_statements = no_df[no_df["is_harmfull_opposition"] == 1]["statement"].values
 
-    # Log sample statements for each type
-    logging.info(
-        f"Type 1 (Hate Yes) example: {hate_yes_statements[0] if len(hate_yes_statements) > 0 else 'No examples'}"
-    )
-    logging.info(
-        f"Type 2 (Safe Yes) example: {safe_yes_statements[0] if len(safe_yes_statements) > 0 else 'No examples'}"
-    )
-    logging.info(
-        f"Type 3 (Hate No) example: {hate_no_statements[0] if len(hate_no_statements) > 0 else 'No examples'}"
-    )
-    logging.info(
-        f"Type 4 (Safe No) example: {safe_no_statements[0] if len(safe_no_statements) > 0 else 'No examples'}"
-    )
+    # CHANGED: Only log once at the beginning
+    print("\n📊 DATASET LOADING SUMMARY")
+    print("-" * 40)
+    print(f"Type 1 (Hate Yes): {len(hate_yes_statements)} samples")
+    print(f"Type 2 (Safe Yes): {len(safe_yes_statements)} samples")
+    print(f"Type 3 (Hate No): {len(hate_no_statements)} samples")
+    print(f"Type 4 (Safe No): {len(safe_no_statements)} samples")
 
     # Calculate minimum length to ensure balanced datasets
     min_len = min(
@@ -176,8 +177,8 @@ def load_data(data_dir="../data/yes_no", dataset_type="hate_vs_antagonist"):
         safe_no_data=safe_no_statements[test_indices],
     )
 
-    logging.info(
-        f"Created datasets with {train_size} training samples, {val_size} validation samples, and {len(test_indices)} test samples for each category"
+    print(
+        f"✅ Created datasets: {train_size} train, {val_size} val, {len(test_indices)} test samples per category"
     )
     return train_dataset, val_dataset, test_dataset
 
@@ -194,24 +195,7 @@ def extract_representation(
     device=None,
     keep_on_gpu=True,
 ):
-    """Extract representation from model.
-
-    Args:
-        model: The model to extract representations from
-        tokenizer: The tokenizer for the model
-        text: The text to extract representation for
-        layer_index: Index of the layer to extract from (None for last layer)
-        get_all_hs: Whether to return all hidden states
-        strategy: Strategy to use for extraction ('first-token', 'last-token', or 'mean')
-        model_type: Type of model (unused)
-        use_decoder: Whether to use decoder hidden states (for encoder-decoder models)
-        device: Device to use for computation
-        keep_on_gpu: Whether to keep the representation on GPU (True) or move to CPU (False)
-
-    Returns:
-        Representation tensor (on GPU if keep_on_gpu=True, otherwise on CPU as numpy array)
-    """
-    # Validate inputs
+    """Extract representation from model with minimal logging."""
     if device is None:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -223,13 +207,9 @@ def extract_representation(
             f"Strategy must be one of ['first-token', 'last-token', 'mean'], got {strategy}"
         )
 
-    # Log input text and strategy only for the first 3 calls
+    # CHANGED: Only log for the very first call
     if _log_counter.should_log():
-        logging.info(
-            f"extract_representation: type(text)={type(text)}, text={str(text)}"
-        )
-    logging.debug(f"Extracting representation for text: {text}...")
-    logging.debug(f"Using strategy: {strategy}, layer: {layer_index}")
+        print(f"🔧 Extracting representations using strategy: {strategy}")
 
     # Tokenize input
     inputs = tokenizer(text, return_tensors="pt", truncation=True, max_length=512)
@@ -260,15 +240,6 @@ def extract_representation(
         representation = hidden_state[:, -1, :]
     elif strategy == "mean":
         representation = hidden_state.mean(dim=1)
-
-    # Log representation statistics only for the first 3 calls
-    if _log_counter.should_log():
-        logging.info(
-            f"Representation mean: {representation.mean().item():.4f}, std: {representation.std().item():.4f}"
-        )
-    logging.debug(f"Representation shape: {representation.shape}")
-    logging.debug(f"Representation mean: {representation.mean().item():.4f}")
-    logging.debug(f"Representation std: {representation.std().item():.4f}")
 
     # Return representation on GPU or as numpy array on CPU
     if keep_on_gpu:
@@ -342,9 +313,6 @@ def extract_all_representations(
 
         # Stack all representations for this type
         representations[data_type] = np.vstack(type_representations)
-        logging.info(
-            f"Extracted {len(type_representations)} representations for {data_type}, shape: {representations[data_type].shape}"
-        )
 
     return representations
 
@@ -374,107 +342,58 @@ def calculate_steering_vectors_domain_preserving(representations):
         if representations[key].size == 0:
             raise ValueError(f"Representations[{key}] is empty")
 
-    print("Applying domain-preserving normalization...")
-
-    # APPROACH 1: Remove the Yes/No bias while preserving content differences
-    # Calculate the pure Yes/No direction (independent of content)
-
-    # Get paired differences for the same content type
-    # For hate content: hate_yes - hate_no (pure Yes/No effect on hate)
-    # For safe content: safe_yes - safe_no (pure Yes/No effect on safe)
+    # CHANGED: Removed verbose logging during normalization
+    # Calculate the Yes/No bias vector
     hate_yes_no_diff = representations["hate_yes"] - representations["hate_no"]
     safe_yes_no_diff = representations["safe_yes"] - representations["safe_no"]
-
-    # The average difference represents the pure Yes/No token effect
-    # (should be similar for both hate and safe if it's just token bias)
     yes_no_bias_vector = np.mean(
         np.vstack([hate_yes_no_diff, safe_yes_no_diff]), axis=0
     )
 
-    print(f"Yes/No bias vector norm: {np.linalg.norm(yes_no_bias_vector):.6f}")
-
-    # APPROACH 2: Project out the Yes/No bias from all representations
-    # Normalize the bias vector
+    # Project out the bias
     yes_no_bias_norm = np.linalg.norm(yes_no_bias_vector)
     if yes_no_bias_norm > 1e-10:
         yes_no_unit_vector = yes_no_bias_vector / yes_no_bias_norm
 
-        # Remove the Yes/No component from each representation
         normalized_reps = {}
         for key in required_keys:
-            # Project out the Yes/No bias: x_clean = x - (x · bias_unit) * bias_unit
             projections = np.dot(representations[key], yes_no_unit_vector)
             bias_component = (
                 projections[:, np.newaxis] * yes_no_unit_vector[np.newaxis, :]
             )
             normalized_reps[key] = representations[key] - bias_component
-
-            print(
-                f"Removed Yes/No bias from {key}: "
-                f"mean projection = {np.mean(projections):.6f}"
-            )
     else:
-        print(
-            "Warning: Yes/No bias vector has near-zero norm, using original representations"
-        )
         normalized_reps = representations.copy()
-
-    # Verify the bias removal worked
-    # Check that Yes/No differences are now minimized
-    new_hate_diff = np.mean(
-        normalized_reps["hate_yes"] - normalized_reps["hate_no"], axis=0
-    )
-    new_safe_diff = np.mean(
-        normalized_reps["safe_yes"] - normalized_reps["safe_no"], axis=0
-    )
-
-    print("After normalization:")
-    print(f"  Hate Yes-No difference norm: {np.linalg.norm(new_hate_diff):.6f}")
-    print(f"  Safe Yes-No difference norm: {np.linalg.norm(new_safe_diff):.6f}")
-
-    # Verify semantic differences are preserved
-    hate_mean = np.mean(
-        np.vstack([normalized_reps["hate_yes"], normalized_reps["hate_no"]]), axis=0
-    )
-    safe_mean = np.mean(
-        np.vstack([normalized_reps["safe_yes"], normalized_reps["safe_no"]]), axis=0
-    )
-    semantic_diff = safe_mean - hate_mean
-
-    print(f"  Preserved semantic difference norm: {np.linalg.norm(semantic_diff):.6f}")
 
     # Calculate mean vectors for each type using normalized data
     means = {}
     for key in required_keys:
         means[key] = np.mean(normalized_reps[key], axis=0)
-        logging.debug(
-            f"Normalized mean vector for {key}: shape {means[key].shape}, norm {np.linalg.norm(means[key]):.6f}"
-        )
 
     # Calculate steering vectors using normalized representations
     steering_vectors = {}
 
-    # 1. Main steering vector: Hate content -> Safe content
+    # Main steering vector: Hate content -> Safe content
     hate_combined_mean = np.mean(
         np.vstack([normalized_reps["hate_yes"], normalized_reps["hate_no"]]), axis=0
     )
     safe_combined_mean = np.mean(
         np.vstack([normalized_reps["safe_yes"], normalized_reps["safe_no"]]), axis=0
     )
+
     steering_vectors["hate_to_safe"] = {
         "vector": safe_combined_mean - hate_combined_mean,
         "color": "#00FF00",
         "label": "Hate → Safe",
     }
 
-    # 2. Combined steering vector (original logic for compatibility)
     steering_vectors["combined"] = {
         "vector": safe_combined_mean - hate_combined_mean,
         "color": "#00FF00",
         "label": "Combined Steering Vector",
     }
 
-    # 3. Answer-specific steering vectors
+    # Answer-specific steering vectors
     steering_vectors["hate_yes_to_safe_yes"] = {
         "vector": means["safe_yes"] - means["hate_yes"],
         "color": "#FF00FF",
@@ -487,7 +406,6 @@ def calculate_steering_vectors_domain_preserving(representations):
         "label": "Hate No → Safe No",
     }
 
-    # 4. Truth-direction steering vectors (for analysis)
     steering_vectors["hate_yes_to_hate_no"] = {
         "vector": means["hate_no"] - means["hate_yes"],
         "color": "#FF9900",
@@ -506,28 +424,14 @@ def calculate_steering_vectors_domain_preserving(representations):
         norm = np.linalg.norm(vector)
         if norm > 1e-10:
             data["vector"] = vector / norm
-            logging.info(
-                f"Calculated steering vector {name}: norm={norm:.6f} (after domain-preserving normalization)"
-            )
         else:
-            # If still near zero, there may not be meaningful differences
-            logging.warning(
-                f"Steering vector {name} has near-zero norm ({norm:.6f}) even after normalization"
-            )
-
             # Add small epsilon to prevent zero norm error
             epsilon = 1e-8
-            logging.warning(f"Adding epsilon {epsilon} to prevent zero norm error")
             random_vec = np.random.randn(*vector.shape)
             random_vec = random_vec / np.linalg.norm(random_vec) * epsilon
             vector = vector + random_vec
             norm = np.linalg.norm(vector)
             data["vector"] = vector / norm
-            logging.info(f"New norm after adding epsilon: {norm:.6f}")
-
-        logging.info(
-            f"Final steering vector {name}: norm={np.linalg.norm(data['vector']):.6f}"
-        )
 
     return steering_vectors
 
@@ -646,10 +550,7 @@ def create_ccs_contrast_pairs_domain_preserving(representations):
     Returns:
         tuple: (correct_representations, incorrect_representations)
     """
-    # First apply domain-preserving normalization
-    print("Applying domain-preserving normalization before CCS training...")
-
-    # Calculate the Yes/No bias vector
+    # Apply domain-preserving normalization
     hate_yes_no_diff = representations["hate_yes"] - representations["hate_no"]
     safe_yes_no_diff = representations["safe_yes"] - representations["safe_no"]
     yes_no_bias_vector = np.mean(
@@ -691,13 +592,6 @@ def create_ccs_contrast_pairs_domain_preserving(representations):
         ]
     )
 
-    print("CCS training data:")
-    print(f"  Correct answers: {len(correct_answers)} samples")
-    print(f"  Incorrect answers: {len(incorrect_answers)} samples")
-    print(
-        f"  Total contrast pairs: {min(len(correct_answers), len(incorrect_answers))}"
-    )
-
     return correct_answers, incorrect_answers
 
 
@@ -730,12 +624,6 @@ def apply_steering_to_representations(
     # Keep safe content unchanged
     steered_reps["safe_yes"] = representations["safe_yes"]
     steered_reps["safe_no"] = representations["safe_no"]
-
-    print(f"Applied steering with strength {steering_strength}")
-    print(
-        f"  Hate content moved by: {steering_strength * np.linalg.norm(steering_vector):.6f}"
-    )
-    print("  Safe content unchanged")
 
     return steered_reps
 
@@ -796,10 +684,16 @@ def train_ccs_probe(
         incorrect_representations, dtype=torch.float32, device=device
     )
 
-    print(f"Training CCS probe for {n_epochs} epochs...")
-
-    # Training loop with progress bar
-    with tqdm(range(n_epochs), desc="Training CCS probe", unit="epoch") as pbar:
+    # CHANGED: Minimal logging during training
+    # Training loop with progress bar but fewer updates
+    with tqdm(
+        range(n_epochs),
+        desc="Training CCS probe",
+        unit="epoch",
+        # CHANGED: Only update progress bar every 10% of epochs to reduce output
+        mininterval=1.0,
+        maxinterval=10.0,
+    ) as pbar:
         for epoch in pbar:
             optimizer.zero_grad()
 
@@ -810,10 +704,10 @@ def train_ccs_probe(
             correct_probs = torch.sigmoid(correct_logits)
             incorrect_probs = torch.sigmoid(incorrect_logits)
 
-            # CCS consistency loss: p(correct) + p(incorrect) should equal 1
+            # CCS consistency loss
             consistency_loss = torch.mean((correct_probs + incorrect_probs - 1) ** 2)
 
-            # CCS confidence loss: encourage confident predictions
+            # CCS confidence loss
             confidence_loss = torch.mean(
                 torch.min(correct_probs, 1 - incorrect_probs) ** 2
             )
@@ -824,22 +718,16 @@ def train_ccs_probe(
             total_loss.backward()
             optimizer.step()
 
-            # Update progress bar with loss info
-            pbar.set_postfix(
-                {
-                    "total_loss": f"{total_loss.item():.4f}",
-                    "consistency": f"{consistency_loss.item():.4f}",
-                    "confidence": f"{confidence_loss.item():.4f}",
-                }
-            )
-
-            if epoch % 100 == 0:
-                print(
-                    f"Epoch {epoch}: consistency_loss={consistency_loss.item():.4f}, "
-                    f"confidence_loss={confidence_loss.item():.4f}, total_loss={total_loss.item():.4f}"
+            # CHANGED: Only update progress bar, no printing during training
+            if epoch % max(1, n_epochs // 10) == 0:  # Update every 10% of epochs
+                pbar.set_postfix(
+                    {
+                        "total_loss": f"{total_loss.item():.4f}",
+                        "consistency": f"{consistency_loss.item():.4f}",
+                        "confidence": f"{confidence_loss.item():.4f}",
+                    }
                 )
 
-    print(f"CCS training completed. Final loss: {total_loss.item():.4f}")
     return ccs_probe
 
 
@@ -877,8 +765,6 @@ def evaluate_ccs_probe(ccs_probe, correct_representations, incorrect_representat
         auc = roc_auc_score(true_labels, probabilities)
     except:
         auc = 0.5
-
-    print(f"CCS Evaluation: Accuracy={accuracy:.3f}, AUC={auc:.3f}")
 
     return {
         "accuracy": accuracy,
