@@ -1,14 +1,10 @@
-from sklearn.decomposition import PCA
-import matplotlib.pyplot as plt
-import pandas as pd
-import seaborn as sns
 import numpy as np
 import torch
 
-# MAIN STEERING FUNCTIONS
 
 class PatchHook:
-    
+    """Hook for applying steering during model inference."""
+
     def __init__(self, token_idx, direction, character, alpha=2):
         self.token_idx = token_idx
         self.direction = direction
@@ -25,7 +21,7 @@ class PatchHook:
         self.direction = direction
 
     def __call__(self, module, input, output):
-        print(f'Alpha param: {self.alpha}')
+        print(f"Alpha param: {self.alpha}")
 
         output = output.clone()
         output[self.character == 0, self.token_idx, :] -= self.alpha * self.direction
@@ -34,79 +30,259 @@ class PatchHook:
         return output
 
 
-# PLOTTIG BEFORE STEERING FUNCTIONS
+def apply_proper_steering(
+    X_pos, X_neg, best_layer, direction_tensor, steering_alpha, device
+):
+    """
+    Apply steering to the best layer and simulate propagation to subsequent layers.
 
-def plot_steering_power(ccs, positive_statements, negative_statements, deltas, labels=["POS (statement + ДА)", "NEG (statement + НЕТ)"], title="Steering along opinion direction"):
+    Changed: Core steering function that properly applies steering effects to simulate
+    how steering in one layer affects subsequent layers in a real transformer.
 
-    weights, bias = ccs.get_weights() 
+    Parameters:
+        X_pos: Positive representations [N, n_layers, hidden_dim]
+        X_neg: Negative representations [N, n_layers, hidden_dim]
+        best_layer: Layer index where steering is applied
+        direction_tensor: Steering direction vector
+        steering_alpha: Steering strength
+        device: Computing device
+
+    Returns:
+        X_pos_steered: Steered positive representations
+        X_neg_steered: Steered negative representations
+    """
+    X_pos_steered = X_pos.copy()
+    X_neg_steered = X_neg.copy()
+
+    # Convert direction to numpy for CPU operations
+    direction_np = (
+        direction_tensor.cpu().numpy()
+        if torch.is_tensor(direction_tensor)
+        else direction_tensor
+    )
+
+    # Apply direct steering to the best layer
+    X_pos_steered[:, best_layer, :] += steering_alpha * direction_np
+    X_neg_steered[:, best_layer, :] -= steering_alpha * direction_np
+
+    # Simulate propagation to subsequent layers
+    # In a real transformer, changes in layer N affect layers N+1, N+2, etc.
+    # We'll simulate this by applying diminishing effects to later layers
+    n_layers = X_pos.shape[1]
+
+    for layer_idx in range(best_layer + 1, n_layers):
+        # Apply diminishing steering effect (exponential decay)
+        decay_factor = np.exp(
+            -0.3 * (layer_idx - best_layer)
+        )  # Decay parameter can be tuned
+        propagated_effect = steering_alpha * decay_factor
+
+        # Apply propagated effect with reduced magnitude
+        X_pos_steered[:, layer_idx, :] += propagated_effect * direction_np * 0.5
+        X_neg_steered[:, layer_idx, :] -= propagated_effect * direction_np * 0.5
+
+    print(f"Applied steering to layer {best_layer} with alpha={steering_alpha}")
+    print(f"Propagated effects to layers {best_layer+1} through {n_layers-1}")
+
+    return X_pos_steered, X_neg_steered
+
+
+def get_steering_direction(ccs):
+    """
+    Extract steering direction from trained CCS.
+
+    Parameters:
+        ccs: Trained CCS object
+
+    Returns:
+        direction_tensor: Normalized steering direction as tensor
+        weights: Raw weights from CCS
+        bias: Bias from CCS
+    """
+    weights, bias = ccs.get_weights()
     direction = weights / (np.linalg.norm(weights) + 1e-6)
-
     direction_tensor = torch.tensor(direction, dtype=torch.float32, device=ccs.device)
 
-    scores_pos, scores_neg = [], []
-
-    if type(positive_statements) != torch.Tensor:
-        positive_statements = torch.Tensor(positive_statements, dtype=torch.float32, device=ccs.device)
-    if type(negative_statements) != torch.Tensor:
-        negative_statements = torch.Tensor(negative_statements, dtype=torch.float32, device=ccs.device)
-
-    for delta in deltas:
-        
-        positive_statements_steered = positive_statements + delta * direction_tensor
-        negative_statements_steered = negative_statements - delta * direction_tensor
-
-        score_pos = ccs.best_probe(positive_statements_steered).median().item()
-        score_neg = ccs.best_probe(negative_statements_steered).median().item()
-        
-        scores_pos.append(score_pos)
-        scores_neg.append(score_neg)
-
-    plt.plot(deltas, scores_pos, label=labels[0])
-    plt.plot(deltas, scores_neg, label=labels[0])
-    plt.axvline(0, color='gray', linestyle='--')
-    plt.xlabel("Steering delta")
-    plt.ylabel("Average CCS result")
-    plt.title(title)
-    plt.legend()
-    plt.grid(True)
-    plt.show()  
+    return direction_tensor, weights, bias
 
 
-def plot_boundary(positive_statemtns, negative_statemnts, y_vector, ccs, n_components, components):
+def apply_simple_steering(X_pos, X_neg, layer_idx, direction_tensor, steering_alpha):
+    """
+    Apply simple steering to a single layer without propagation.
 
-    X_all = positive_statemtns - negative_statemnts
+    Parameters:
+        X_pos: Positive representations for single layer [N, hidden_dim]
+        X_neg: Negative representations for single layer [N, hidden_dim]
+        layer_idx: Layer index (for logging)
+        direction_tensor: Steering direction vector
+        steering_alpha: Steering strength
 
-    pca = PCA(n_components=n_components)
-    X_pca = pca.fit_transform(X_all)
+    Returns:
+        X_pos_steered: Steered positive representations
+        X_neg_steered: Steered negative representations
+    """
+    # Convert direction to numpy for CPU operations
+    direction_np = (
+        direction_tensor.cpu().numpy()
+        if torch.is_tensor(direction_tensor)
+        else direction_tensor
+    )
 
-    w, b = ccs.get_weights()
-    w_pca = pca.components_ @ w  # projection w to PCA space
-    
-    idx_x, idx_y = components
-    x_label = f"PC{idx_x}"
-    y_label = f"PC{idx_y}"
+    # Apply steering
+    X_pos_steered = X_pos + steering_alpha * direction_np
+    X_neg_steered = X_neg - steering_alpha * direction_np
 
-    df = pd.DataFrame(X_pca, columns=[f"PC{i}" for i in range(n_components)])
-    df["label"] = y_vector
+    print(f"Applied simple steering to layer {layer_idx} with alpha={steering_alpha}")
 
-    # boundary
-    w_x, w_y = w_pca[idx_x], w_pca[idx_y]
-    slope = -w_x / (w_y + 1e-8)
+    return X_pos_steered, X_neg_steered
 
-    intercept = -b / (w_y + 1e-8)
 
-    # plot
-    plt.figure(figsize=(6, 6))
-    sns.scatterplot(data=df, x=x_label, y=y_label, hue="label", palette="Set1", alpha=0.7)
+def test_steering_strengths(
+    ccs, X_pos, X_neg, layer_idx, direction_tensor, alphas=None
+):
+    """
+    Test different steering strengths and return prediction changes.
 
-    x_vals = np.linspace(df[x_label].min(), df[x_label].max(), 200)
-    y_vals = slope * x_vals + intercept
-    plt.plot(x_vals, y_vals, 'k--', label="Decision boundary")
+    Parameters:
+        ccs: Trained CCS object
+        X_pos: Positive representations [N, hidden_dim]
+        X_neg: Negative representations [N, hidden_dim]
+        layer_idx: Layer index
+        direction_tensor: Steering direction vector
+        alphas: List of steering strengths to test
 
-    plt.xlabel(x_label)
-    plt.ylabel(y_label)
-    plt.title("Decision boundary in PCA space")
-    plt.grid(True)
-    plt.legend()
-    plt.tight_layout()
-    plt.show()
+    Returns:
+        results: Dict with alpha values and corresponding prediction changes
+    """
+    if alphas is None:
+        alphas = [0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0]
+
+    results = {
+        "alphas": alphas,
+        "pos_predictions": [],
+        "neg_predictions": [],
+        "avg_confidence": [],
+    }
+
+    # Convert to tensors if needed
+    if not isinstance(X_pos, torch.Tensor):
+        X_pos_tensor = torch.tensor(X_pos, dtype=torch.float32, device=ccs.device)
+    else:
+        X_pos_tensor = X_pos
+
+    if not isinstance(X_neg, torch.Tensor):
+        X_neg_tensor = torch.tensor(X_neg, dtype=torch.float32, device=ccs.device)
+    else:
+        X_neg_tensor = X_neg
+
+    direction_np = (
+        direction_tensor.cpu().numpy()
+        if torch.is_tensor(direction_tensor)
+        else direction_tensor
+    )
+
+    for alpha in alphas:
+        # Apply steering
+        X_pos_steered = X_pos_tensor + alpha * torch.tensor(
+            direction_np, dtype=torch.float32, device=ccs.device
+        )
+        X_neg_steered = X_neg_tensor - alpha * torch.tensor(
+            direction_np, dtype=torch.float32, device=ccs.device
+        )
+
+        # Get predictions
+        with torch.no_grad():
+            pos_pred = ccs.best_probe(X_pos_steered).median().item()
+            neg_pred = ccs.best_probe(X_neg_steered).median().item()
+
+        avg_conf = 0.5 * (pos_pred + (1 - neg_pred))
+
+        results["pos_predictions"].append(pos_pred)
+        results["neg_predictions"].append(neg_pred)
+        results["avg_confidence"].append(avg_conf)
+
+    return results
+
+
+def calculate_steering_metrics(X_orig, X_steered):
+    """
+    Calculate quantitative metrics for steering effects.
+
+    Parameters:
+        X_orig: Original representations [N, hidden_dim]
+        X_steered: Steered representations [N, hidden_dim]
+
+    Returns:
+        metrics: Dict with various steering effect metrics
+    """
+    # Mean squared difference
+    mse = np.mean((X_steered - X_orig) ** 2)
+
+    # Mean absolute difference
+    mae = np.mean(np.abs(X_steered - X_orig))
+
+    # Cosine similarity between original and steered
+    cos_sim = np.mean(
+        [
+            np.dot(x_orig, x_steer)
+            / (np.linalg.norm(x_orig) * np.linalg.norm(x_steer) + 1e-8)
+            for x_orig, x_steer in zip(X_orig, X_steered)
+        ]
+    )
+
+    # L2 norm of difference vectors
+    diff_norms = np.linalg.norm(X_steered - X_orig, axis=1)
+    mean_diff_norm = np.mean(diff_norms)
+    std_diff_norm = np.std(diff_norms)
+
+    return {
+        "mse": mse,
+        "mae": mae,
+        "cosine_similarity": cos_sim,
+        "mean_diff_norm": mean_diff_norm,
+        "std_diff_norm": std_diff_norm,
+        "max_diff_norm": np.max(diff_norms),
+        "min_diff_norm": np.min(diff_norms),
+    }
+
+
+def compare_steering_layers(
+    X_pos_orig, X_neg_orig, X_pos_steered, X_neg_steered, start_layer=0
+):
+    """
+    Compare steering effects across all layers.
+
+    Parameters:
+        X_pos_orig: Original positive representations [N, n_layers, hidden_dim]
+        X_neg_orig: Original negative representations [N, n_layers, hidden_dim]
+        X_pos_steered: Steered positive representations [N, n_layers, hidden_dim]
+        X_neg_steered: Steered negative representations [N, n_layers, hidden_dim]
+        start_layer: Starting layer for comparison
+
+    Returns:
+        layer_metrics: Dict with metrics for each layer
+    """
+    n_layers = X_pos_orig.shape[1]
+    layer_metrics = {}
+
+    for layer_idx in range(start_layer, n_layers):
+        # Positive representations
+        pos_metrics = calculate_steering_metrics(
+            X_pos_orig[:, layer_idx, :], X_pos_steered[:, layer_idx, :]
+        )
+
+        # Negative representations
+        neg_metrics = calculate_steering_metrics(
+            X_neg_orig[:, layer_idx, :], X_neg_steered[:, layer_idx, :]
+        )
+
+        # Combined metrics
+        combined_metrics = {}
+        for key in pos_metrics.keys():
+            combined_metrics[f"pos_{key}"] = pos_metrics[key]
+            combined_metrics[f"neg_{key}"] = neg_metrics[key]
+            combined_metrics[f"avg_{key}"] = (pos_metrics[key] + neg_metrics[key]) / 2
+
+        layer_metrics[layer_idx] = combined_metrics
+
+    return layer_metrics
