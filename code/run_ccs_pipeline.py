@@ -72,7 +72,7 @@ from steering import (  # Core steering logic only
     apply_proper_steering,
     compare_steering_layers,
 )
-from steering_analysis import (  # Additional analysis functions
+from steering_analysis_fixed import (  # Additional analysis functions
     create_comprehensive_comparison_visualizations,
     plot_boundary_comparison_improved,
     plot_improved_layerwise_steering_focus,
@@ -81,7 +81,7 @@ from steering_analysis import (  # Additional analysis functions
 )
 
 # Changed: Import ALL analysis functions from ALL modules
-from steering_analysis1 import (  # Primary analysis functions
+from steering_analysis1_fixed import (  # Primary analysis functions
     create_best_separation_plots,
     create_comparison_results_table,
     plot_boundary_comparison_for_components,
@@ -108,12 +108,6 @@ def run_comprehensive_best_layer_steering_analysis(
 ):
     """
     Run COMPLETE comprehensive steering analysis for the best layer.
-
-    Changed: Integrated ALL functions from ALL analysis modules:
-    - steering_analysis1.py
-    - steering_analysis.py
-    - format_results.py
-    - PLUS all missing CSV files and plots
     """
     print(
         f"Running COMPLETE comprehensive steering analysis for best layer {best_layer}..."
@@ -788,13 +782,6 @@ def main():
     print(f"CCS Lambda: {CCS_CONFIG['lambda_classification']}")
     print(f"Normalizing: {CCS_CONFIG['normalizing']}")
     print(f"Steering Alpha: {STEERING_CONFIG.get('default_alpha', 2.0)}")
-    print("Enhanced Component Analysis: ✓ ENABLED")
-    print("Complete Function Integration: ✓ ENABLED")
-    print("steering_analysis.py Functions: ✓ ALL INTEGRATED")
-    print("steering_analysis1.py Functions: ✓ ALL INTEGRATED")
-    print("format_results.py Functions: ✓ ALL INTEGRATED")
-    print("Mode: BEST LAYER ANALYSIS WITH COMPLETE INTEGRATION")
-    print("=" * 80)
 
     # Load data
     positive_texts, negative_texts, labels = load_data()
@@ -932,18 +919,6 @@ def main():
             print(
                 f"    {metric}: {orig_val:.4f} → {steered_val:.4f} ({pct_change:+.1f}%)"
             )
-
-    print("\n🎯 COMPLETE INTEGRATION FEATURES:")
-    print("   ✓ ALL functions from steering_analysis.py integrated")
-    print("   ✓ ALL functions from steering_analysis1.py integrated")
-    print("   ✓ ALL functions from format_results.py integrated")
-    print("   ✓ Enhanced component separation analysis")
-    print("   ✓ Comprehensive comparison visualizations")
-    print("   ✓ Improved steering analysis plots")
-    print("   ✓ Layer-wise PCA and component matrix analysis")
-    print("   ✓ ALL missing CSV files from original dump")
-    print("   ✓ ALL missing plot files from original dump")
-    print("   ✓ ALL missing log files from original dump")
 
     print("\n📊 NEW ENHANCED FEATURES:")
     print("   🔍 5 Best component pair separation plots")

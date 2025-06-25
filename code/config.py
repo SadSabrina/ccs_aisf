@@ -50,14 +50,14 @@ MODEL_CONFIGS = {
     #     "quantization": None,
     # },
     # ===== MEDIUM MODELS (6-8B) =====
-    "pythia_6.9b": {
-        "model_name": "EleutherAI/pythia-6.9b",
-        "model_type": "decoder",
-        "token_strategy": "last-token",
-        "use_decoder": False,
-        "size": "6.9B",
-        "quantization": None,
-    },
+    # "pythia_6.9b": {
+    #     "model_name": "EleutherAI/pythia-6.9b",
+    #     "model_type": "decoder",
+    #     "token_strategy": "last-token",
+    #     "use_decoder": False,
+    #     "size": "6.9B",
+    #     "quantization": None,
+    # },
     # "llama3_8b_base": {
     #     "model_name": "meta-llama/Meta-Llama-3-8B",
     #     "model_type": "decoder",
@@ -248,14 +248,14 @@ MODEL_CONFIGS = {
     #     "quantization": None,
     # },
     # ACTIVE MODEL - UNCOMMENT ONE AT A TIME
-    # "pythia_1b": {
-    #     "model_name": "EleutherAI/pythia-1b",
-    #     "model_type": "decoder",
-    #     "token_strategy": "last-token",
-    #     "use_decoder": False,
-    #     "size": "1B",
-    #     "quantization": None,
-    # },
+    "pythia_1b": {
+        "model_name": "EleutherAI/pythia-1b",
+        "model_type": "decoder",
+        "token_strategy": "last-token",
+        "use_decoder": False,
+        "size": "1B",
+        "quantization": None,
+    },
 }
 
 # ============================================================================

@@ -9,3 +9,4 @@ ccs_venv
 test_files
 ccs_results_all2all/
 ccs_results/
+ccs_results_dump/

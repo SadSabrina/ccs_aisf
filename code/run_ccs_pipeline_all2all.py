@@ -75,7 +75,7 @@ from steering import (  # Core steering logic only
     apply_proper_steering,
     compare_steering_layers,
 )
-from steering_analysis import (  # Additional analysis functions
+from steering_analysis_fixed import (  # Additional analysis functions
     plot_boundary_comparison_improved,
     plot_improved_layerwise_steering_focus,
     plot_steering_layer_analysis,
@@ -83,7 +83,7 @@ from steering_analysis import (  # Additional analysis functions
 )
 
 # Changed: Import ALL analysis functions from ALL modules
-from steering_analysis1 import (  # Primary analysis functions
+from steering_analysis1_fixed import (  # Primary analysis functions
     create_best_separation_plots,
     create_comparison_results_table,
     plot_boundary_comparison_for_components,
@@ -113,11 +113,6 @@ def run_comprehensive_layer_steering_analysis(
 ):
     """
     Run COMPLETE comprehensive steering analysis for a specific layer.
-
-    Changed: Integrated ALL functions from ALL analysis modules:
-    - steering_analysis1.py
-    - steering_analysis.py
-    - format_results.py
     """
     print(
         f"Running COMPLETE comprehensive steering analysis for layer {steering_layer}..."
@@ -926,15 +921,6 @@ def create_global_summary(base_output_dir, all_layer_results, model_config):
         f.write(f"Steering Alpha: {STEERING_CONFIG.get('default_alpha', 2.0)}\n")
         f.write(f"Dataset: {DATA_CONFIG['dataset_name']}\n\n")
 
-        f.write("Analysis Integration:\n")
-        f.write("-" * 20 + "\n")
-        f.write("✓ steering_analysis1.py - ALL functions integrated\n")
-        f.write("✓ steering_analysis.py - ALL functions integrated\n")
-        f.write("✓ format_results.py - ALL functions integrated\n")
-        f.write("✓ Complete comparison analysis enabled\n")
-        f.write("✓ Enhanced component separation analysis\n")
-        f.write("✓ Comprehensive visualizations\n\n")
-
         f.write("Layer Analysis Results:\n")
         f.write("-" * 30 + "\n")
 
@@ -968,16 +954,6 @@ def create_global_summary(base_output_dir, all_layer_results, model_config):
                 f.write("  Comprehensive Analysis: Yes\n")
             else:
                 f.write("  Comprehensive Analysis: No\n")
-
-        f.write("\n\nAnalysis Configuration:\n")
-        f.write("-" * 25 + "\n")
-        f.write(f"CCS Lambda: {CCS_CONFIG['lambda_classification']}\n")
-        f.write(f"Normalizing: {CCS_CONFIG['normalizing']}\n")
-        f.write("Enhanced Component Analysis: Enabled\n")
-        f.write("Complete Function Integration: Enabled\n")
-        f.write("All steering_analysis.py Functions: Enabled\n")
-        f.write("All steering_analysis1.py Functions: Enabled\n")
-        f.write("All format_results.py Functions: Enabled\n")
 
         f.write("\n\nDirectory Structure:\n")
         f.write("-" * 20 + "\n")
@@ -1040,13 +1016,6 @@ def main():
     print(f"CCS Lambda: {CCS_CONFIG['lambda_classification']}")
     print(f"Normalizing: {CCS_CONFIG['normalizing']}")
     print(f"Steering Alpha: {STEERING_CONFIG.get('default_alpha', 2.0)}")
-    print("Enhanced Component Analysis: ✓ ENABLED")
-    print("Complete Function Integration: ✓ ENABLED")
-    print("steering_analysis.py Functions: ✓ ALL INTEGRATED")
-    print("steering_analysis1.py Functions: ✓ ALL INTEGRATED")
-    print("format_results.py Functions: ✓ ALL INTEGRATED")
-    print("Mode: ALL-TO-ALL LAYER ANALYSIS WITH COMPLETE INTEGRATION")
-    print("=" * 80)
 
     # Load data
     positive_texts, negative_texts, labels = load_data()
@@ -1164,15 +1133,6 @@ def main():
                     print(
                         f"    {metric}: {orig_val:.4f} → {steered_val:.4f} ({pct_change:+.1f}%)"
                     )
-
-    print("\n🎯 COMPLETE INTEGRATION FEATURES:")
-    print("   ✓ ALL functions from steering_analysis.py integrated")
-    print("   ✓ ALL functions from steering_analysis1.py integrated")
-    print("   ✓ ALL functions from format_results.py integrated")
-    print("   ✓ Enhanced component separation analysis")
-    print("   ✓ Comprehensive comparison visualizations")
-    print("   ✓ Improved steering analysis plots")
-    print("   ✓ Layer-wise PCA and component matrix analysis")
 
     print("\n📊 NEW ENHANCED FEATURES:")
     print("   🔍 5 Best component pair separation plots per layer")
