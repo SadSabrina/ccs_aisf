@@ -2,7 +2,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import pandas as pd
 import numpy as np
-from sklearn.decomposition import PCA
+from sklearn.decomposition import PCA, SparsePCA
 from sklearn.manifold import TSNE
 
 
@@ -61,6 +61,8 @@ def plot_pca_or_tsne_layerwise(X_pos, X_neg, hue, standardize=True, reshape= Non
           projector = PCA(n_components=n_components)  # is good for encoder-decoder
         if mode == 'tsne':
           projector = TSNE(n_components=n_components, metric='cosine') # good for encoder only | decoder only
+        if mode == 'pca-sparse':
+          projector = SparsePCA(n_components=n_components, alpha=0)
 
         X_proj = projector.fit_transform(states_data)
 

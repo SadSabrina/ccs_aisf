@@ -20,7 +20,7 @@ def get_llm_type(model_cfg) -> str:
 def extract_representation(
     model, tokenizer, text,
     layer_index=None, get_all_hs=False, strategy="first-token",
-    model_type=None, use_decoder=False, device=None
+    model_type=None, use_decoder=False, device=None, token_number=None
 ):
     """
     Extracts the vector representation from the given model layer or all model layers.
@@ -49,7 +49,7 @@ def extract_representation(
 
 
     # Tokenize
-    inputs = tokenizer(text, return_tensors="pt").to(model.device)
+    inputs = tokenizer(text, return_tensors="pt", padding=True, truncation=True).to(model.device)
 
     # model_type 
     if model_type is None:
@@ -58,8 +58,8 @@ def extract_representation(
     # Forward pass 
     if model_type == 'encoder-decoder': # Encoder-Decoder models
 
-      enc_inputs = tokenizer(text, return_tensors="pt").to(model.device)
-      dec_inputs = tokenizer("", return_tensors="pt").to(model.device)
+      enc_inputs = tokenizer(text, return_tensors="pt", padding=True, truncation=True).to(model.device)
+      dec_inputs = tokenizer("", return_tensors="pt", padding=True, truncation=True).to(model.device)
 
       with torch.no_grad():
         outputs = model(enc_inputs.input_ids, 
@@ -94,6 +94,8 @@ def extract_representation(
                 reps.append(layer_h[:, -1, :].squeeze(0).cpu().numpy())
             elif strategy == "mean":
                 reps.append(layer_h.mean(dim=1).squeeze(0).cpu().numpy())
+            elif strategy == "custom":
+               reps.append(layer_h[:, token_number, :].squeeze(0).cpu().numpy())
             else:
                 raise ValueError("strategy must be 'mean', 'last-token' or 'first-token'")
         return np.stack(reps) 
@@ -113,12 +115,16 @@ def extract_representation(
     
     elif strategy == "last-token": # for decoder models (or decoder part if encoder-decoder)
       return hs[-1].detach().cpu().numpy()
+    
+    elif strategy == "custom":
+       return hs[token_number].detach().cpu().numpy()
 
     else:
         raise ValueError("strategy must be 'mean', 'last-token' or 'first-token'")
     
 
-def vectorize_df(df_text, model, tokenizer, layer_index=None, strategy="last_token", model_type=None, use_decoder=False, get_all_hs=False, device=None):
+def vectorize_df(df_text, model, tokenizer, layer_index=None, strategy="last_token", model_type=None, 
+                 use_decoder=False, get_all_hs=False, device=None, token_number=None):
     """
     Converts the df["text"] column to an embedding matrix (n_samples, n_layers, hidden_dim)
 
@@ -145,7 +151,8 @@ def vectorize_df(df_text, model, tokenizer, layer_index=None, strategy="last_tok
             model_type=model_type,
             use_decoder=use_decoder,
             get_all_hs=get_all_hs,
-            device=device
+            device=device,
+            token_number=token_number
         )
         embeddings.append(vec)
     return np.stack(embeddings)

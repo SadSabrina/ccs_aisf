@@ -8,7 +8,7 @@ import torch
 # MAIN STEERING FUNCTIONS
 
 class PatchHook:
-    
+
     def __init__(self, token_idx, direction, character, alpha=2):
         self.token_idx = token_idx
         self.direction = direction
@@ -33,8 +33,39 @@ class PatchHook:
         print(f"Patched token {self.token_idx}")
         return output
 
+class PatchHookTOP:
+    
+    def __init__(self, token_idx_list, direction, character, alpha=2):
+        self.token_idx_list = token_idx_list  # список токенов
+        self.direction = direction
+        self.alpha = alpha
+        self.character = character
+
+    def set_character(self, character):
+        self.character = character
+
+    def set_alpha(self, alpha):
+        self.alpha = alpha
+
+    def set_direction(self, direction):
+        self.direction = direction
+
+    def set_token_idx_list(self, token_idx_list):
+        self.token_idx_list = token_idx_list
+
+    def __call__(self, module, input, output):
+        print(f'Alpha param: {self.alpha}')
+        output = output.clone()
+
+        for token_idx in self.token_idx_list:
+            output[self.character == 0, token_idx, :] -= self.alpha * self.direction
+            output[self.character == 1, token_idx, :] += self.alpha * self.direction
+            print(f"Patched token {token_idx}")
+        return output
+
 
 # PLOTTIG BEFORE STEERING FUNCTIONS
+
 
 def plot_steering_power(ccs, positive_statements, negative_statements, deltas, labels=["POS (statement + ДА)", "NEG (statement + НЕТ)"], title="Steering along opinion direction"):
 
