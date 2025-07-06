@@ -202,7 +202,7 @@ class CCS(object):
 
         pA0, pA1, p_notA0, p_notA1 = self.get_contrastive_probas(xA0_test, xA1_test, x_notA0_test, x_notA1_test)
 
-        ideal_dist =  0.5*(np.sqrt( (pA1 - np.ones(pA1.shape))**2 +(pA0 - np.zeros(pA0.shape))**2 + (p_notA1 - np.zeros(p_notA1.shape))**2 + (p_notA0 - np.ones(p_notA0.shape))**2))
+        ideal_dist =  0.5*(np.sqrt((pA1 - np.ones(pA1.shape))**2 +(pA0 - np.zeros(pA0.shape))**2 + (p_notA1 - np.zeros(p_notA1.shape))**2 + (p_notA0 - np.ones(p_notA0.shape))**2))
         return ideal_dist
 
     def train(self):
@@ -437,8 +437,8 @@ def train_ccs_on_hidden_states(X_pos, X_neg, y_vec, train_idx,
         print(f"Layer {layer_idx+1}/{n_layers}, CCS accuracy: {ccs_acc}")
 
         # Probas
-        A_idx = test_idx[test_idx <= len(X_pos)/2]
-        notA_idx = (A_idx + n_samples/2).astype(int)
+        A_idx = test_idx[test_idx >= len(X_pos)/2]
+        notA_idx = (A_idx - n_samples/2).astype(int)
 
         A0_test = X_neg[A_idx, layer_idx, :]
         A1_test = X_pos[A_idx, layer_idx, :]
