@@ -45,19 +45,16 @@
 
 ---
 
-## 4. Decoder-only: OpenLLaMA (Causal)
+## 4. Decoder-only big models: OpenLLaMA (Causal), Gemma
 
 **Token position:** `last`  
-**Model:** `LlamaTokenizer` + `LlamaForCausalLM`
+**Model:** `LlamaTokenizer` + `AutoModelForCausalLM` (Llama)
+**Model:** `AutoTokenizer` + `AutoModelForCausalLM` (Gemma)
+
 
 | Name | Version | Description | Hugging Face ID |
 |------|---------|-------------|------------------|
-| OpenLLaMA 3B | v2 | base | `openlm-research/open_llama_3b_v2` |
-| OpenLLaMA 3B Instruct | v2 | instruction-tuned | `mediocredev/open-llama-3b-v2-instruct` |
-| OpenLLaMA 7B | v2 | base | `openlm-research/open_llama_7b_v2` |
-| OpenLLaMA 13B | v2 | base | `openlm-research/open_llama_13b` |
 | OpenLLaMA 3B | v1 | base | `openlm-research/open_llama_3b` |
-| OpenLLaMA 7B | v1 | base | `openlm-research/open_llama_7b` |
 | OpenLLaMA 13B | v1 | base | `openlm-research/open_llama_13b` |
-
----
+| GEMMA 2B | - | base | `google/gemma-2b` |
+| GEMMA 7B | - | base | `google/gemma-7b` |
