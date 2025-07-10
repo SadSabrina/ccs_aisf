@@ -75,12 +75,6 @@ from steering import (  # Core steering logic only
     apply_proper_steering,
     compare_steering_layers,
 )
-from steering_analysis_fixed import (  # Additional analysis functions
-    plot_boundary_comparison_improved,
-    plot_improved_layerwise_steering_focus,
-    plot_steering_layer_analysis,
-    plot_steering_power_improved,
-)
 
 # Changed: Import ALL analysis functions from ALL modules
 from steering_analysis1_fixed import (  # Primary analysis functions
@@ -92,6 +86,12 @@ from steering_analysis1_fixed import (  # Primary analysis functions
 )
 from steering_analysis_all2all import (
     create_comprehensive_comparison_visualizations,
+)
+from steering_analysis_fixed import (  # Additional analysis functions
+    plot_boundary_comparison_improved,
+    plot_improved_layerwise_steering_focus,
+    plot_steering_layer_analysis,
+    plot_steering_power_improved,
 )
 
 # ============================================================================
@@ -123,7 +123,7 @@ def run_comprehensive_layer_steering_analysis(
     plots_dir.mkdir(exist_ok=True)
 
     # Get steering alpha from config
-    steering_alpha = STEERING_CONFIG.get("default_alpha", 2.0)
+    steering_alpha = STEERING_CONFIG.get("default_alpha", 100.0)
 
     # Apply proper steering with propagation
     X_pos_steered, X_neg_steered = apply_proper_steering(
@@ -165,7 +165,7 @@ def run_comprehensive_layer_steering_analysis(
     print("Analyzing layer-wise steering effects...")
     layer_metrics = compare_steering_layers(X_pos, X_neg, X_pos_steered, X_neg_steered)
     layer_effects_plot = plot_layer_steering_effects(
-        layer_metrics, steering_layer, plots_dir, steering_alpha
+        layer_metrics, steering_layer, plots_dir, steering_alpha, "all2all"
     )
     analysis_results["layer_effects"] = {
         "plot_path": layer_effects_plot,

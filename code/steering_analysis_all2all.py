@@ -263,16 +263,37 @@ def _create_steering_bars_plot_fixed(
             pct_col = f"{metric}_percent_change"
             if pct_col in steering_data.index:
                 pct_val = steering_data[pct_col]
-                # CHANGED: Handle NaN and infinite values
-                if np.isfinite(pct_val):
+                # CRITICAL FIX: Handle NaN, infinite, AND astronomical values
+                if (
+                    np.isfinite(pct_val) and abs(pct_val) < 1e10
+                ):  # Reject astronomical values
                     percent_changes.append(pct_val)
                     valid_metrics.append(metric)
+                elif abs(pct_val) >= 1e10:
+                    print(f"❌ FOUND ASTRONOMICAL VALUE: {metric} = {pct_val:.2e}")
+                    print("❌ This is the source of the matplotlib dimension error!")
+                    print("❌ Skipping this metric to prevent crash")
 
         if not valid_metrics:
             continue
 
-        # CHANGED: Reasonable figure size
-        plt.figure(figsize=(max(8, len(valid_metrics) * 1.2), 6))
+        # CRITICAL FIX: Reasonable figure size with safety checks
+        fig_width = max(8, len(valid_metrics) * 1.2)
+        fig_height = 6
+
+        # SAFETY CHECK: Prevent astronomical figure dimensions
+        if fig_width > 50 or fig_height > 50:
+            print(
+                f"❌ CRITICAL: Figure dimensions too large: ({fig_width}, {fig_height})"
+            )
+            print(f"❌ len(valid_metrics) = {len(valid_metrics)}")
+            print(f"❌ valid_metrics = {valid_metrics}")
+            print("❌ This would cause matplotlib RendererAgg error!")
+            fig_width = min(fig_width, 20)  # Cap at 20 inches
+            fig_height = min(fig_height, 15)  # Cap at 15 inches
+            print(f"✅ Using safe dimensions: ({fig_width}, {fig_height})")
+
+        plt.figure(figsize=(fig_width, fig_height))
 
         colors = ["red" if pc < 0 else "green" for pc in percent_changes]
         bars = plt.bar(

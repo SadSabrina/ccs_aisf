@@ -81,6 +81,8 @@ class CCS(object):
         var_normalize=False,
         lambda_classification=0.0,
         predict_normalize=False,
+        max_gradient_norm=None,
+        max_weight_magnitude=None,
     ):
         # Changed: Explicit device checking instead of try-except
         if device is None:
@@ -119,6 +121,8 @@ class CCS(object):
         self.lr = lr
         self.batch_size = batch_size
         self.weight_decay = weight_decay
+        self.max_gradient_norm = max_gradient_norm
+        self.max_weight_magnitude = max_weight_magnitude
 
         self.linear = linear
         self.initialize_probe()
@@ -323,7 +327,29 @@ class CCS(object):
 
                 optimizer.zero_grad()
                 loss.backward()
+
+                # CRITICAL FIX: Apply gradient clipping to prevent exploding gradients
+                if self.max_gradient_norm is not None:
+                    torch.nn.utils.clip_grad_norm_(
+                        self.probe.parameters(), self.max_gradient_norm
+                    )
+
                 optimizer.step()
+
+                # CRITICAL FIX: Cap weight magnitudes to prevent astronomical values
+                if self.max_weight_magnitude is not None:
+                    with torch.no_grad():
+                        # Cap all Linear layer weights regardless of probe type
+                        for layer in self.probe.modules():
+                            if isinstance(layer, nn.Linear):
+                                weight_magnitude = torch.norm(layer.weight)
+                                if weight_magnitude > self.max_weight_magnitude:
+                                    layer.weight.data *= (
+                                        self.max_weight_magnitude / weight_magnitude
+                                    )
+                                    print(
+                                        f"⚠️  Capped weight magnitude from {weight_magnitude:.2e} to {self.max_weight_magnitude}"
+                                    )
 
         return loss.detach().cpu().item()
 
@@ -454,6 +480,9 @@ def train_ccs_on_hidden_states(
         y_train = y_vec[train_idx].astype(np.float32)
         y_test = y_vec[test_idx].astype(np.float32)
 
+        # Import CCS_CONFIG to get regularization parameters
+        from config import CCS_CONFIG
+
         ccs = CCS(
             X_neg_train_layer,
             X_pos_train_layer,
@@ -461,6 +490,9 @@ def train_ccs_on_hidden_states(
             var_normalize=False,
             lambda_classification=lambda_classification,
             device=device,
+            weight_decay=CCS_CONFIG.get("weight_decay", 0.01),
+            max_gradient_norm=CCS_CONFIG.get("max_gradient_norm", None),
+            max_weight_magnitude=CCS_CONFIG.get("max_weight_magnitude", None),
         )
         ccs.repeated_train()
 
@@ -474,7 +506,7 @@ def train_ccs_on_hidden_states(
             s_score = ccs.get_silhouette(X_neg_test_layer, X_pos_test_layer)
         ccs_acc = ccs.get_acc(X_neg_test_layer, X_pos_test_layer, y_test.values)
 
-        print(f"Layer {layer_idx+1}/{n_layers}, CCS accuracy: {ccs_acc}")
+        print(f"Layer {layer_idx}/{n_layers-1}, CCS accuracy: {ccs_acc}")
 
         # Probas
         A_idx = test_idx[test_idx <= len(X_pos) / 2]

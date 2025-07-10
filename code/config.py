@@ -107,7 +107,7 @@ MODEL_CONFIGS = {
     #     "use_decoder": False,
     #     "size": "13B",
     #     "quantization": None,
-    # },
+    # # },
     # "pythia_12b": {
     #     "model_name": "EleutherAI/pythia-12b",
     #     "model_type": "decoder",
@@ -248,14 +248,149 @@ MODEL_CONFIGS = {
     #     "quantization": None,
     # },
     # ACTIVE MODEL - UNCOMMENT ONE AT A TIME
-    "pythia_1b": {
-        "model_name": "EleutherAI/pythia-1b",
-        "model_type": "decoder",
-        "token_strategy": "last-token",
+    ##########################################
+    ##########################################
+    ##########################################
+    # ===== ENCODER-ONLY: DEBERTA MODELS =====
+    "deberta_base": {
+        "model_name": "microsoft/deberta-base",
+        "model_type": "encoder",
+        "token_strategy": "first-token",
         "use_decoder": False,
-        "size": "1B",
+        "size": "100M",
         "quantization": None,
     },
+    # "deberta_v3_small_hate": {
+    #     "model_name": "Narrativaai/deberta-v3-small-finetuned-hate_speech18",
+    #     "model_type": "encoder",
+    #     "token_strategy": "first-token",
+    #     "use_decoder": False,
+    #     "size": "22M",
+    #     "quantization": None,
+    # },
+    # "deberta_large": {
+    #     "model_name": "microsoft/deberta-large",
+    #     "model_type": "encoder",
+    #     "token_strategy": "first-token",
+    #     "use_decoder": False,
+    #     "size": "400M",
+    #     "quantization": None,
+    # },
+    # "deberta_v3_large_hate": {
+    #     "model_name": "Elron/deberta-v3-large-hate",
+    #     "model_type": "encoder",
+    #     "token_strategy": "first-token",
+    #     "use_decoder": False,
+    #     "size": "400M",
+    #     "quantization": None,
+    # },
+    # ===== DECODER-ONLY: GPT MODELS =====
+    # "gpt2": {
+    #     "model_name": "gpt2",
+    #     "model_type": "decoder",
+    #     "token_strategy": "last-token",
+    #     "use_decoder": False,
+    #     "size": "124M",
+    #     "quantization": None,
+    # },
+    # "gpt2_large": {
+    #     "model_name": "gpt2-large",
+    #     "model_type": "decoder",
+    #     "token_strategy": "last-token",
+    #     "use_decoder": False,
+    #     "size": "774M",
+    #     "quantization": None,
+    # },
+    # "gpt_neo_detox": {
+    #     "model_name": "ybelkada/gpt-neo-125m-detox",
+    #     "model_type": "decoder",
+    #     "token_strategy": "last-token",
+    #     "use_decoder": False,
+    #     "size": "125M",
+    #     "quantization": None,
+    # },
+    # ===== ENCODER-ONLY: BERT MODELS =====
+    # "bert_base_uncased": {
+    #     "model_name": "google-bert/bert-base-uncased",
+    #     "model_type": "encoder",
+    #     "token_strategy": "first-token",  # BERT is encoder-only, use first token
+    #     "use_decoder": False,
+    #     "size": "110M",
+    #     "quantization": None,
+    # },
+    # "bert_hate_speech_fine_tuned": {
+    #     "model_name": "ayushdh96/HateSpeech_Bert_Base_Uncased_Fine_Tuned",
+    #     "model_type": "encoder",
+    #     "token_strategy": "first-token",  # BERT is encoder-only, use first token
+    #     "use_decoder": False,
+    #     "size": "110M",
+    #     "quantization": None,
+    # },
+    # "bert_hate_speech_tweets": {
+    #     "model_name": "ctoraman/hate-speech-bert",
+    #     "model_type": "encoder",
+    #     "token_strategy": "first-token",  # BERT is encoder-only, use first token
+    #     "use_decoder": False,
+    #     "size": "110M",
+    #     "quantization": None,
+    # },
+    # ===== DECODER-ONLY: OPENLLAMA MODELS =====
+    # "open_llama_3b_v2": {
+    #     "model_name": "openlm-research/open_llama_3b_v2",
+    #     "model_type": "decoder",
+    #     "token_strategy": "last-token",
+    #     "use_decoder": False,
+    #     "size": "3B",
+    #     "quantization": None,
+    # },
+    # "open_llama_3b_v2_instruct": {
+    #     "model_name": "mediocredev/open-llama-3b-v2-instruct",
+    #     "model_type": "decoder",
+    #     "token_strategy": "last-token",
+    #     "use_decoder": False,
+    #     "size": "3B",
+    #     "quantization": None,
+    # },
+    # "open_llama_7b_v2": {
+    #     "model_name": "openlm-research/open_llama_7b_v2",
+    #     "model_type": "decoder",
+    #     "token_strategy": "last-token",
+    #     "use_decoder": False,
+    #     "size": "7B",
+    #     "quantization": None,
+    # },
+    # "open_llama_13b_v2": {
+    #     "model_name": "openlm-research/open_llama_13b",
+    #     "model_type": "decoder",
+    #     "token_strategy": "last-token",
+    #     "use_decoder": False,
+    #     "size": "13B",
+    #     "quantization": None,
+    # },
+    # "open_llama_3b_v1": {
+    #     "model_name": "openlm-research/open_llama_3b",
+    #     "model_type": "decoder",
+    #     "token_strategy": "last-token",
+    #     "use_decoder": False,
+    #     "size": "3B",
+    #     "quantization": None,
+    # },
+    # "open_llama_7b_v1": {
+    #     "model_name": "openlm-research/open_llama_7b",
+    #     "model_type": "decoder",
+    #     "token_strategy": "last-token",
+    #     "use_decoder": False,
+    #     "size": "7B",
+    #     "quantization": None,
+    # },
+    # "open_llama_13b_v1": {
+    #     "model_name": "openlm-research/open_llama_13b",
+    #     "model_type": "decoder",
+    #     "token_strategy": "last-token",
+    #     "use_decoder": False,
+    #     "size": "13B",
+    #     "quantization": None,
+    # },
 }
 
 # ============================================================================
@@ -279,8 +414,10 @@ CCS_CONFIG = {
     "nepochs": 1500,  # Number of training epochs
     "ntries": 10,  # Number of random initializations
     "lr": 0.015,  # Learning rate
-    "weight_decay": 0.01,  # L2 regularization
+    "weight_decay": 0.01,  # CRITICAL FIX: Strong L2 regularization to prevent astronomical weights
     "batch_size": -1,  # -1 for full batch
+    "max_gradient_norm": 1.0,  # CRITICAL FIX: Gradient clipping to prevent exploding gradients
+    "max_weight_magnitude": 10.0,  # CRITICAL FIX: Cap maximum weight magnitude
 }
 
 # Best Layer Selection Configuration
@@ -295,7 +432,20 @@ STEERING_CONFIG = {
     "token_idx": -1,  # Token position to steer (-1 for last token)
     "plot_steering": True,  # Whether to plot steering effects
     "plot_boundary": True,  # Whether to plot decision boundary
-    "default_alpha": 2.0,  # Changed: Default alpha for comprehensive analysis
+    "default_alpha": 100.0,  # Changed: Reduced from 100.0 to prevent extremely large values
+}
+EFFECT_LAYER_DELAY = 2
+
+
+# Multi-Token Steering Configuration
+MULTI_TOKEN_CONFIG = {
+    "token_percentage": 1,
+    # Percentage of tokens to steer (e.g., 20 = last 20% of tokens)
+    "strategy": "last-n-percent",  # Options: 'last-n-percent', 'first-n-percent', 'middle-n-percent', 'evenly-spaced'
+    "aggregation_method": "mean",  # How to aggregate multi-token representations: 'mean', 'max', 'last', 'first'
+    "propagate_steering": True,  # Whether to propagate steering effects to subsequent layers
+    "min_tokens": 1,  # Minimum number of tokens to steer (fallback if percentage yields 0)
+    "max_tokens": 10,  # Maximum number of tokens to steer (cap for very long sequences)
 }
 
 # Output Configuration

@@ -5,7 +5,7 @@ import torch
 class PatchHook:
     """Hook for applying steering during model inference."""
 
-    def __init__(self, token_idx, direction, character, alpha=2):
+    def __init__(self, token_idx, direction, character, alpha):
         self.token_idx = token_idx
         self.direction = direction
         self.alpha = alpha
@@ -262,10 +262,25 @@ def compare_steering_layers(
     Returns:
         layer_metrics: Dict with metrics for each layer
     """
-    n_layers = X_pos_orig.shape[1]
+    print("Analyzing layer-wise steering effects with proper steered data...")
+
+    n_layers_orig = X_pos_orig.shape[1]
+    n_layers_steered = X_pos_steered.shape[1]
+
+    print(f"Original layers: {n_layers_orig}, Steered layers: {n_layers_steered}")
+
+    # Use minimum number of layers to avoid index errors
+    n_layers = min(n_layers_orig, n_layers_steered)
+
+    print(
+        f"Comparing layers {start_layer} to {n_layers-1} (total: {n_layers - start_layer} layers)"
+    )
+
     layer_metrics = {}
 
     for layer_idx in range(start_layer, n_layers):
+        print(f"Analyzing layer {layer_idx}...")
+
         # Positive representations
         pos_metrics = calculate_steering_metrics(
             X_pos_orig[:, layer_idx, :], X_pos_steered[:, layer_idx, :]

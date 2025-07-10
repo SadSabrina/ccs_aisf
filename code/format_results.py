@@ -961,7 +961,7 @@ def plot_all_layers_components_matrix(
 
     # Process layers
     for layer_idx in range(start_layer, end_layer):
-        print(f"\nProcessing layer {layer_idx+1}/{end_layer} (Layer {layer_idx})...")
+        print(f"\nProcessing layer {layer_idx}/{end_layer-1} (Layer {layer_idx})...")
 
         try:
             # Extract data for this layer

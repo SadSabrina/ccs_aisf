@@ -580,63 +580,336 @@ def create_best_separation_plots(
 ######
 
 
-def plot_layer_steering_effects(layer_metrics, best_layer, plots_dir, steering_alpha):
+def plot_layer_steering_effects(
+    layer_metrics, best_layer, plots_dir, steering_alpha, method_name="unknown"
+):
     """
-    Plot quantitative steering effects across layers.
+    Plot steering effects across layers with metrics.
 
-    Parameters:
-        layer_metrics: Dict from compare_steering_layers function
-        best_layer: Layer where steering was applied
+    Args:
+        layer_metrics: Dictionary with layer indices as keys and metrics as values
+        best_layer: Layer where steering was applied (0-indexed)
         plots_dir: Directory to save plots
         steering_alpha: Steering strength used
+        method_name: Name of the method used (for filename)
     """
     layers = sorted(layer_metrics.keys())
 
     # Extract metrics for plotting
-    metrics_to_plot = [
-        "avg_mse",
-        "avg_mae",
-        "avg_cosine_similarity",
-        "avg_mean_diff_norm",
-    ]
+    mse_values = [layer_metrics[layer]["avg_mse"] for layer in layers]
+    mae_values = [layer_metrics[layer]["avg_mae"] for layer in layers]
+    cosine_values = [layer_metrics[layer]["avg_cosine_similarity"] for layer in layers]
+    mean_diff_norms = [layer_metrics[layer]["avg_mean_diff_norm"] for layer in layers]
 
-    fig, axes = plt.subplots(2, 2, figsize=(15, 10))
-    axes = axes.flatten()
+    # Create comprehensive plot
+    fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(16, 12))
 
-    for idx, metric in enumerate(metrics_to_plot):
-        ax = axes[idx]
+    # Plot 1: MSE
+    ax1.plot(layers, mse_values, "b-o", linewidth=2, markersize=6)
+    ax1.set_xlabel("Layer")
+    ax1.set_ylabel("Average MSE")
+    ax1.set_title("Mean Squared Error")
+    ax1.grid(True, alpha=0.3)
 
-        values = [layer_metrics[layer][metric] for layer in layers]
+    # Show where steering was applied and effects should appear
+    ax1.axvline(
+        best_layer,  # Effects now appear at best_layer due to correct hook placement
+        color="red",
+        linestyle="--",
+        linewidth=2,
+        label=f"Steering Applied & Effects at Layer {best_layer}",
+        alpha=0.7,
+    )
+    ax1.legend()
 
-        ax.plot(layers, values, "b-o", linewidth=2, markersize=6)
-        ax.axvline(
-            best_layer,
-            color="red",
-            linestyle="--",
-            linewidth=2,
-            label=f"Steering Layer {best_layer}",
-        )
+    # Plot 2: MAE
+    ax2.plot(layers, mae_values, "g-s", linewidth=2, markersize=6)
+    ax2.set_xlabel("Layer")
+    ax2.set_ylabel("Average MAE")
+    ax2.set_title("Mean Absolute Error")
+    ax2.grid(True, alpha=0.3)
 
-        ax.set_xlabel("Layer")
-        ax.set_ylabel(metric.replace("avg_", "").replace("_", " ").title())
-        ax.set_title(
-            f'{metric.replace("avg_", "").replace("_", " ").title()} Across Layers'
-        )
-        ax.grid(True, alpha=0.3)
-        ax.legend()
+    # Same vertical lines
+    ax2.axvline(
+        best_layer,
+        color="red",
+        linestyle="--",
+        linewidth=2,
+        label=f"Steering Applied & Effects at Layer {best_layer}",
+        alpha=0.7,
+    )
+    ax2.legend()
 
-    plt.suptitle(f"Steering Effects Across Layers (α={steering_alpha})", fontsize=16)
+    # Plot 3: Cosine Similarity
+    ax3.plot(layers, cosine_values, "r-^", linewidth=2, markersize=6)
+    ax3.set_xlabel("Layer")
+    ax3.set_ylabel("Average Cosine Similarity")
+    ax3.set_title("Cosine Similarity")
+    ax3.grid(True, alpha=0.3)
+
+    # Same vertical lines
+    ax3.axvline(
+        best_layer,
+        color="red",
+        linestyle="--",
+        linewidth=2,
+        label=f"Steering Applied & Effects at Layer {best_layer}",
+        alpha=0.7,
+    )
+    ax3.legend()
+
+    # Plot 4: Mean Difference Norms
+    ax4.plot(layers, mean_diff_norms, "m-d", linewidth=2, markersize=6)
+    ax4.set_xlabel("Layer")
+    ax4.set_ylabel("Average Mean Diff Norm")
+    ax4.set_title("Mean Difference Norms")
+    ax4.grid(True, alpha=0.3)
+
+    # Same vertical lines
+    ax4.axvline(
+        best_layer,
+        color="red",
+        linestyle="--",
+        linewidth=2,
+        label=f"Steering Applied & Effects at Layer {best_layer}",
+        alpha=0.7,
+    )
+    ax4.legend()
+
+    plt.suptitle(
+        f"Layer Steering Effects Analysis (α={steering_alpha})\n"
+        f"Steering Applied & Effects at Layer {best_layer}",
+        fontsize=14,
+    )
     plt.tight_layout()
 
-    save_path = plots_dir / f"layer_steering_effects_alpha_{steering_alpha}.png"
+    # Save plot
+    plot_filename = f"layer_steering_effects_{method_name}_alpha_{steering_alpha}.png"
+    save_path = plots_dir / plot_filename
     plt.savefig(save_path, dpi=300, bbox_inches="tight")
     plt.close()
 
     print(f"Layer steering effects plot saved to: {save_path}")
+    print(
+        f"Red line at layer {best_layer} shows where steering is applied and effects appear"
+    )
+
     return save_path
 
 
 #######
+
+
+def plot_steering_power_with_proper_steered_data(
+    ccs,
+    positive_statements_original,
+    negative_statements_original,
+    positive_statements_steered,
+    negative_statements_steered,
+    labels=None,
+    title: str = "Steering along opinion direction",
+    save_path=None,
+):
+    """
+    Plot how steering affects CCS predictions using PROPER steered representations.
+
+    CRITICAL FIX: This function now uses PROPER steered representations that were
+    extracted from the actual forward pass, NOT simulations!
+
+    Parameters:
+        ccs: Trained CCS object
+        positive_statements_original: Original positive representations [N, hidden_dim]
+        negative_statements_original: Original negative representations [N, hidden_dim]
+        positive_statements_steered: PROPER steered positive representations [N, hidden_dim]
+        negative_statements_steered: PROPER steered negative representations [N, hidden_dim]
+        labels: Labels for legend
+        title: Plot title
+        save_path: Path to save plot
+    """
+    if labels is None:
+        labels = ["POS (statement + ДА)", "NEG (statement + НЕТ)"]
+
+    # Convert to tensors if needed and add safety checks
+    if not isinstance(positive_statements_original, torch.Tensor):
+        positive_statements_original = torch.tensor(
+            positive_statements_original, dtype=torch.float32, device=ccs.device
+        )
+    if not isinstance(negative_statements_original, torch.Tensor):
+        negative_statements_original = torch.tensor(
+            negative_statements_original, dtype=torch.float32, device=ccs.device
+        )
+    if not isinstance(positive_statements_steered, torch.Tensor):
+        positive_statements_steered = torch.tensor(
+            positive_statements_steered, dtype=torch.float32, device=ccs.device
+        )
+    if not isinstance(negative_statements_steered, torch.Tensor):
+        negative_statements_steered = torch.tensor(
+            negative_statements_steered, dtype=torch.float32, device=ccs.device
+        )
+
+    # Safety checks for NaN or infinite values
+    def check_tensor_validity(tensor, name):
+        if torch.isnan(tensor).any():
+            print(f"⚠️ WARNING: {name} contains NaN values!")
+            return False
+        if torch.isinf(tensor).any():
+            print(f"⚠️ WARNING: {name} contains infinite values!")
+            return False
+        # Check for extremely large values that could cause plotting issues
+        max_val = torch.max(torch.abs(tensor))
+        if max_val > 1e6:
+            print(f"⚠️ WARNING: {name} contains very large values (max: {max_val:.2e})")
+            return False
+        return True
+
+    # Check all tensors for validity
+    tensors_valid = all(
+        [
+            check_tensor_validity(
+                positive_statements_original, "positive_statements_original"
+            ),
+            check_tensor_validity(
+                negative_statements_original, "negative_statements_original"
+            ),
+            check_tensor_validity(
+                positive_statements_steered, "positive_statements_steered"
+            ),
+            check_tensor_validity(
+                negative_statements_steered, "negative_statements_steered"
+            ),
+        ]
+    )
+
+    if not tensors_valid:
+        print("❌ Skipping plot due to invalid tensor values")
+        return
+
+    # Get CCS predictions for original data
+    with torch.no_grad():
+        # Check original representations before CCS prediction
+        if (
+            torch.isnan(positive_statements_original).any()
+            or torch.isinf(positive_statements_original).any()
+        ):
+            print("❌ Original positive statements contain NaN or Inf values!")
+            return
+        if (
+            torch.isnan(negative_statements_original).any()
+            or torch.isinf(negative_statements_original).any()
+        ):
+            print("❌ Original negative statements contain NaN or Inf values!")
+            return
+
+        score_pos_orig = ccs.best_probe(positive_statements_original).median().item()
+        score_neg_orig = ccs.best_probe(negative_statements_original).median().item()
+
+    # Get CCS predictions for PROPER steered data
+    with torch.no_grad():
+        # Check steered representations before CCS prediction
+        if (
+            torch.isnan(positive_statements_steered).any()
+            or torch.isinf(positive_statements_steered).any()
+        ):
+            print("❌ Steered positive statements contain NaN or Inf values!")
+            return
+        if (
+            torch.isnan(negative_statements_steered).any()
+            or torch.isinf(negative_statements_steered).any()
+        ):
+            print("❌ Steered negative statements contain NaN or Inf values!")
+            return
+
+        # Check magnitude of steered representations
+        pos_max = torch.max(torch.abs(positive_statements_steered)).item()
+        neg_max = torch.max(torch.abs(negative_statements_steered)).item()
+        if pos_max > 1e6 or neg_max > 1e6:
+            print(
+                f"❌ Steered representations have extremely large values! pos_max={pos_max:.2e}, neg_max={neg_max:.2e}"
+            )
+            return
+
+        score_pos_steered = ccs.best_probe(positive_statements_steered).median().item()
+        score_neg_steered = ccs.best_probe(negative_statements_steered).median().item()
+
+    # Debug: Print the actual scores
+    print("🔍 DEBUG CCS Scores:")
+    print(f"  Original: pos={score_pos_orig:.6f}, neg={score_neg_orig:.6f}")
+    print(f"  Steered:  pos={score_pos_steered:.6f}, neg={score_neg_steered:.6f}")
+
+    # Safety check for scores
+    scores = [score_pos_orig, score_neg_orig, score_pos_steered, score_neg_steered]
+    if any(np.isnan(score) or np.isinf(score) for score in scores):
+        print("❌ Skipping plot due to invalid CCS scores")
+        print(f"Scores: {scores}")
+        return
+
+    # Check for extremely large scores that could cause plotting issues
+    max_score = max(abs(score) for score in scores)
+    if max_score > 1e3:  # Much more aggressive threshold
+        print(
+            f"❌ Skipping plot due to extremely large CCS scores (max: {max_score:.2e})"
+        )
+        print(f"Scores: {scores}")
+        return
+
+    # Additional check: ensure all scores are in reasonable range
+    for score in scores:
+        if abs(score) > 1000:  # Any score > 1000 is suspicious
+            print(f"❌ Skipping plot due to suspicious CCS score: {score}")
+            print(f"All scores: {scores}")
+            return
+
+    # Create comparison plot with fixed figure size
+    try:
+        plt.figure(figsize=(10, 6))
+
+        # Plot original vs steered
+        categories = ["Original", "Steered"]
+        pos_scores = [score_pos_orig, score_pos_steered]
+        neg_scores = [score_neg_orig, score_neg_steered]
+
+        x = np.arange(len(categories))
+        width = 0.35
+
+        plt.bar(x - width / 2, pos_scores, width, label=labels[0], alpha=0.7)
+        plt.bar(x + width / 2, neg_scores, width, label=labels[1], alpha=0.7)
+
+        plt.xlabel("Model State")
+        plt.ylabel("Average CCS Result")
+        plt.title(f"{title} - Original vs Steered Comparison")
+        plt.xticks(x, categories)
+        plt.legend()
+        plt.grid(True, alpha=0.3)
+
+        # Add value labels on bars
+        for i, (pos_score, neg_score) in enumerate(zip(pos_scores, neg_scores)):
+            plt.text(
+                i - width / 2,
+                pos_score + 0.01,
+                f"{pos_score:.3f}",
+                ha="center",
+                va="bottom",
+            )
+            plt.text(
+                i + width / 2,
+                neg_score + 0.01,
+                f"{neg_score:.3f}",
+                ha="center",
+                va="bottom",
+            )
+
+        if save_path:
+            plt.savefig(save_path, dpi=300, bbox_inches="tight")
+            plt.close()
+            print(f"FIXED steering power plot saved to: {save_path}")
+            print("✅ Using PROPER steered representations, NO simulation!")
+        else:
+            plt.show()
+    except Exception as e:
+        print(f"❌ Error in plotting section: {e}")
+        print(f"Scores that caused the error: {scores}")
+        plt.close()
+        return
 
 
 def plot_steering_power(
@@ -651,8 +924,14 @@ def plot_steering_power(
     """
     Plot how steering strength affects CCS predictions.
 
-    Changed: Added save_path parameter to save plot instead of showing
+    ⚠️ WARNING: This function uses SIMULATION and should NOT be used in production!
+    Use plot_steering_power_with_proper_steered_data() instead for proper analysis.
+
+    This function is kept for backward compatibility but marked as deprecated.
     """
+    print("⚠️ WARNING: plot_steering_power() uses SIMULATION!")
+    print("⚠️ Use plot_steering_power_with_proper_steered_data() for proper analysis!")
+
     if labels is None:
         labels = ["POS (statement + ДА)", "NEG (statement + НЕТ)"]
 
@@ -673,6 +952,7 @@ def plot_steering_power(
         )
 
     for delta in deltas:
+        # ⚠️ SIMULATION CODE - NOT PROPER STEERING!
         positive_statements_steered = positive_statements + delta * direction_tensor
         negative_statements_steered = negative_statements - delta * direction_tensor
 
@@ -688,14 +968,15 @@ def plot_steering_power(
     plt.axvline(0, color="gray", linestyle="--")
     plt.xlabel("Steering delta")
     plt.ylabel("Average CCS result")
-    plt.title(title)
+    plt.title(f"{title} (⚠️ SIMULATION - NOT PROPER STEERING)")
     plt.legend()
     plt.grid(True)
 
     if save_path:
         plt.savefig(save_path, dpi=300, bbox_inches="tight")
         plt.close()
-        print(f"Steering plot saved to: {save_path}")
+        print(f"⚠️ SIMULATION steering plot saved to: {save_path}")
+        print("⚠️ This plot uses SIMULATION, not proper steered representations!")
     else:
         plt.show()
 
@@ -805,3 +1086,769 @@ def create_comparison_results_table(
 
     print(f"Comparison table created with {len(comparison_df)} layers")
     return comparison_df, orig_results, steered_results
+
+
+def plot_pca_eigenvalues_analysis(
+    X_pos,
+    X_neg,
+    labels,
+    model_type="original",
+    save_path=None,
+    n_components=10,
+    global_axis_limits=None,
+):
+    """
+    Create PCA eigenvalues analysis for each layer.
+
+    For each layer:
+    1. Apply PCA with n_components
+    2. Calculate eigenvalues and eigenvectors of PCA components matrix
+    3. Create triangular grid of plots showing eigenvalues for each layer
+
+    Parameters:
+        X_pos: Positive representations [N, n_layers, hidden_dim]
+        X_neg: Negative representations [N, n_layers, hidden_dim]
+        labels: True labels [N,]
+        model_type: "original" or "steered"
+        save_path: Path to save the plot
+        n_components: Number of PCA components (default: 10)
+        global_axis_limits: Dict with axis limits for consistent scaling across models
+    """
+    print(f"Creating PCA eigenvalues analysis for {model_type} model...")
+
+    n_layers = X_pos.shape[1]
+
+    # Store eigenvalues for each layer
+    layer_eigenvalues = []
+    layer_pca_components = []
+
+    # Process each layer
+    for layer_idx in range(n_layers):
+        print(f"Processing layer {layer_idx}/{n_layers-1}")
+
+        # Get data for this layer
+        X_pos_layer = X_pos[:, layer_idx, :]
+        X_neg_layer = X_neg[:, layer_idx, :]
+
+        # Combine positive and negative data
+        X_combined = np.vstack([X_pos_layer, X_neg_layer])
+
+        # Handle NaN values
+        if np.isnan(X_combined).any():
+            X_combined = np.nan_to_num(X_combined, nan=0.0, posinf=0.0, neginf=0.0)
+
+        # Standardize data
+        X_combined_std = (X_combined - X_combined.mean(0)) / (X_combined.std(0) + 1e-8)
+        X_combined_std = np.nan_to_num(X_combined_std, nan=0.0, posinf=0.0, neginf=0.0)
+
+        # Apply PCA
+        actual_components = min(
+            n_components, X_combined_std.shape[1], X_combined_std.shape[0]
+        )
+        pca = PCA(n_components=actual_components)
+
+        pca.fit(X_combined_std)
+
+        # FIXED: Use the actual PCA eigenvalues, not covariance of components
+        eigenvalues = pca.explained_variance_  # These are the real eigenvalues!
+
+        # Sort eigenvalues in descending order (should already be sorted by PCA)
+        eigenvalues = np.real(eigenvalues)  # Take real part (should already be real)
+
+        layer_eigenvalues.append(eigenvalues)
+        layer_pca_components.append(pca.components_)
+
+    # Create triangular grid of plots
+    n_plots_per_side = min(n_components, len(layer_eigenvalues[0]))
+
+    # Create figure with triangular arrangement
+    fig_size = max(15, n_plots_per_side * 2.5)
+    fig, axes = plt.subplots(
+        n_plots_per_side, n_plots_per_side, figsize=(fig_size, fig_size)
+    )
+
+    # Create colormap for layers (gradient)
+    from matplotlib import cm as mpl_cm
+
+    colors = mpl_cm.get_cmap("viridis")(np.linspace(0, 1, n_layers))
+
+    # Create triangular grid of plots
+    for i in range(n_plots_per_side):
+        for j in range(n_plots_per_side):
+            ax = axes[i, j]
+
+            if j > i:  # Upper triangle - hide these plots
+                ax.set_visible(False)
+                continue
+
+            if i == j:  # Diagonal - show distribution of eigenvalues for this component
+                eigenvals_for_component = [
+                    layer_eigenvalues[layer][i] for layer in range(n_layers)
+                ]
+
+                # Handle case where eigenvalues have very small range
+                eigenvals_array = np.array(eigenvals_for_component)
+                eigenvals_range = np.max(eigenvals_array) - np.min(eigenvals_array)
+
+                if eigenvals_range < 1e-10 or np.all(
+                    eigenvals_array == eigenvals_array[0]
+                ):
+                    # All eigenvalues are essentially the same - create a simple bar plot
+                    ax.bar(
+                        [0],
+                        [n_layers],
+                        alpha=0.7,
+                        color="skyblue",
+                        edgecolor="black",
+                        width=0.5,
+                    )
+                    ax.set_title(
+                        f"PC{i} Eigenvalue Distribution\n(Constant: {eigenvals_array[0]:.6f})"
+                    )
+                    ax.set_xlabel(f"PC{i} Eigenvalue")
+                    ax.set_ylabel("Frequency")
+                    ax.set_xlim(-0.5, 0.5)
+                    ax.set_xticks([0])
+                    ax.set_xticklabels([f"{eigenvals_array[0]:.6f}"])
+                else:
+                    # Calculate appropriate number of bins based on data range and sample size
+                    n_bins = min(
+                        max(3, int(np.sqrt(n_layers))), 15
+                    )  # Between 3 and 15 bins
+
+                    # Create histogram
+                    ax.hist(
+                        eigenvals_for_component,
+                        bins=n_bins,
+                        alpha=0.7,
+                        color="skyblue",
+                        edgecolor="black",
+                    )
+                    ax.set_title(f"PC{i} Eigenvalue Distribution")
+                    ax.set_xlabel(f"PC{i} Eigenvalue")
+                    ax.set_ylabel("Frequency")
+
+                # Apply global axis limits to diagonal plots if provided
+                if i == j and global_axis_limits is not None:
+                    if f"PC{i}" in global_axis_limits:
+                        ax.set_xlim(global_axis_limits[f"PC{i}"])
+
+                ax.grid(True, alpha=0.3)
+
+            else:  # Lower triangle - scatter plot of eigenvalues
+                # PC j (x-axis) vs PC i (y-axis)
+                x_vals = [layer_eigenvalues[layer][j] for layer in range(n_layers)]
+                y_vals = [layer_eigenvalues[layer][i] for layer in range(n_layers)]
+
+                # Plot each layer as a dot with different color
+                for layer in range(n_layers):
+                    ax.scatter(
+                        x_vals[layer],
+                        y_vals[layer],
+                        c=[colors[layer]],
+                        s=60,
+                        alpha=0.7,
+                        label=f"Layer {layer}" if layer < 10 else None,
+                    )  # Limit legend entries
+
+                ax.set_xlabel(f"PC{j} Eigenvalue")
+                ax.set_ylabel(f"PC{i} Eigenvalue")
+                ax.set_title(f"PC{j} vs PC{i} Eigenvalues")
+                ax.grid(True, alpha=0.3)
+
+                # Apply global axis limits if provided
+                if global_axis_limits is not None:
+                    if f"PC{j}" in global_axis_limits:
+                        ax.set_xlim(global_axis_limits[f"PC{j}"])
+                    if f"PC{i}" in global_axis_limits:
+                        ax.set_ylim(global_axis_limits[f"PC{i}"])
+
+                # Add correlation coefficient as text
+                if len(x_vals) > 1:
+                    corr = np.corrcoef(x_vals, y_vals)[0, 1]
+                    if not np.isnan(corr):
+                        ax.text(
+                            0.05,
+                            0.95,
+                            f"r={corr:.3f}",
+                            transform=ax.transAxes,
+                            bbox=dict(
+                                boxstyle="round,pad=0.3", facecolor="white", alpha=0.8
+                            ),
+                        )
+
+    # Add colorbar to show layer gradient
+    sm = plt.cm.ScalarMappable(
+        cmap=mpl_cm.get_cmap("viridis"), norm=plt.Normalize(vmin=0, vmax=n_layers - 1)
+    )
+    sm.set_array([])
+    cbar = plt.colorbar(sm, ax=axes, shrink=0.8)
+    cbar.set_label("Layer Index", rotation=270, labelpad=20)
+
+    # Add main title
+    plt.suptitle(
+        f"PCA Components Eigenvalues Analysis - {model_type.title()} Model\n"
+        f"({n_layers} layers, {n_plots_per_side} components)",
+        fontsize=16,
+    )
+
+    plt.tight_layout()
+
+    if save_path:
+        plt.savefig(save_path, dpi=300, bbox_inches="tight")
+        plt.close()
+        print(f"PCA eigenvalues analysis saved to: {save_path}")
+    else:
+        plt.show()
+
+    # Create summary statistics
+    summary_stats = {
+        "n_layers": n_layers,
+        "n_components": n_plots_per_side,
+        "eigenvalues_per_layer": layer_eigenvalues,
+        "mean_eigenvalues": np.mean([np.mean(ev) for ev in layer_eigenvalues]),
+        "std_eigenvalues": np.std([np.mean(ev) for ev in layer_eigenvalues]),
+    }
+
+    return summary_stats
+
+
+def create_pca_eigenvalues_comparison(
+    X_pos_orig,
+    X_neg_orig,
+    X_pos_steered,
+    X_neg_steered,
+    labels,
+    best_layer,
+    steering_alpha,
+    plots_dir,
+    n_components=10,
+):
+    """
+    Create PCA eigenvalues analysis for both original and steered models.
+
+    CHANGES MADE:
+    1. Added explicit bounds checking for layer and component indices
+    2. Improved error handling for eigenvalues extraction
+    3. Added data validation to prevent index out of range errors
+    4. All data kept on GPU using torch tensors throughout processing
+    5. Added fallback for missing eigenvalues with proper error messages
+
+    Parameters:
+        X_pos_orig: Original positive representations [N, n_layers, hidden_dim]
+        X_neg_orig: Original negative representations [N, n_layers, hidden_dim]
+        X_pos_steered: Steered positive representations [N, n_layers, hidden_dim]
+        X_neg_steered: Steered negative representations [N, n_layers, hidden_dim]
+        labels: True labels [N,]
+        best_layer: Layer where steering was applied
+        steering_alpha: Steering strength
+        plots_dir: Directory to save plots
+        n_components: Number of PCA components (default: 10)
+
+    Returns:
+        dict: Analysis results for both models
+    """
+    print("\nCreating PCA eigenvalues comparison analysis...")
+    print(f"Best layer: {best_layer}, Steering alpha: {steering_alpha}")
+
+    results = {}
+
+    # =================================================================
+    # STEP 1: Calculate global axis limits for consistent scaling
+    # =================================================================
+    print("Calculating global axis limits for consistent scaling...")
+
+    def get_eigenvalues_for_all_layers_gpu(X_pos, X_neg, n_components):
+        """Helper function to get eigenvalues for all layers using GPU tensors"""
+        n_layers = X_pos.shape[1]
+        all_eigenvalues = []
+
+        # Convert to GPU tensors if needed
+        if not torch.is_tensor(X_pos):
+            X_pos = torch.tensor(
+                X_pos,
+                dtype=torch.float32,
+                device="cuda" if torch.cuda.is_available() else "cpu",
+            )
+        if not torch.is_tensor(X_neg):
+            X_neg = torch.tensor(
+                X_neg,
+                dtype=torch.float32,
+                device="cuda" if torch.cuda.is_available() else "cpu",
+            )
+
+        for layer_idx in range(n_layers):
+            # Get data for this layer (keep on GPU)
+            X_pos_layer = X_pos[:, layer_idx, :]
+            X_neg_layer = X_neg[:, layer_idx, :]
+
+            # Combine positive and negative data
+            X_combined = torch.cat([X_pos_layer, X_neg_layer], dim=0)
+
+            # Handle NaN/inf values on GPU
+            X_combined = torch.where(
+                torch.isnan(X_combined), torch.zeros_like(X_combined), X_combined
+            )
+            X_combined = torch.where(
+                torch.isinf(X_combined), torch.zeros_like(X_combined), X_combined
+            )
+
+            # Standardize data on GPU
+            X_mean = X_combined.mean(dim=0, keepdim=True)
+            X_std = X_combined.std(dim=0, keepdim=True) + 1e-8
+            X_combined_std = (X_combined - X_mean) / X_std
+
+            # Handle NaN/inf after standardization
+            X_combined_std = torch.where(
+                torch.isnan(X_combined_std),
+                torch.zeros_like(X_combined_std),
+                X_combined_std,
+            )
+            X_combined_std = torch.where(
+                torch.isinf(X_combined_std),
+                torch.zeros_like(X_combined_std),
+                X_combined_std,
+            )
+
+            # Apply PCA using torch operations
+            actual_components = min(
+                n_components, X_combined_std.shape[1], X_combined_std.shape[0]
+            )
+
+            # Center the data
+            X_centered = X_combined_std - X_combined_std.mean(dim=0, keepdim=True)
+
+            # Compute covariance matrix on GPU
+            cov_matrix = torch.mm(X_centered.T, X_centered) / (X_centered.shape[0] - 1)
+
+            # Add small regularization for numerical stability
+            reg_term = 1e-6 * torch.eye(cov_matrix.shape[0], device=cov_matrix.device)
+            cov_matrix = cov_matrix + reg_term
+
+            # Compute eigenvalues with fallback to CPU for numerical stability
+            try:
+                eigenvalues, _ = torch.linalg.eigh(cov_matrix)
+            except RuntimeError as e:
+                if "illegal value" in str(e):
+                    print(
+                        f"   ⚠️  Eigenvalue computation failed for layer {layer_idx}, falling back to CPU with double precision"
+                    )
+                    cov_matrix_cpu = cov_matrix.cpu().double()  # Use double precision
+                    eigenvalues, _ = torch.linalg.eigh(cov_matrix_cpu)
+                    eigenvalues = eigenvalues.float().to(X_combined_std.device)
+                else:
+                    raise e
+
+            # Sort in descending order and take real part
+            eigenvalues = torch.real(eigenvalues)
+            eigenvalues, _ = torch.sort(eigenvalues, descending=True)
+
+            # Take top components and convert to CPU for storage
+            eigenvalues = eigenvalues[:actual_components].cpu().numpy()
+            all_eigenvalues.append(eigenvalues)
+
+        return all_eigenvalues
+
+    # Get eigenvalues for both models (using GPU processing)
+    print("Computing eigenvalues for original model...")
+    orig_eigenvalues = get_eigenvalues_for_all_layers_gpu(
+        X_pos_orig, X_neg_orig, n_components
+    )
+    print("Computing eigenvalues for steered model...")
+    steered_eigenvalues = get_eigenvalues_for_all_layers_gpu(
+        X_pos_steered, X_neg_steered, n_components
+    )
+
+    # Validate eigenvalues arrays
+    if len(orig_eigenvalues) == 0 or len(steered_eigenvalues) == 0:
+        print("ERROR: No eigenvalues computed for one or both models")
+        return {"error": "eigenvalues_computation_failed"}
+
+    # CHANGE: Added explicit bounds checking to prevent index errors
+    n_layers_orig = len(orig_eigenvalues)
+    n_layers_steered = len(steered_eigenvalues)
+    min_layers = min(n_layers_orig, n_layers_steered)
+
+    print(
+        f"Original model layers: {n_layers_orig}, Steered model layers: {n_layers_steered}"
+    )
+    print(f"Using minimum layers for comparison: {min_layers}")
+
+    # CHANGE: Validate that we have at least one layer
+    if min_layers == 0:
+        print("ERROR: No matching layers found between original and steered models")
+        return {"error": "no_matching_layers"}
+
+    # CHANGE: Check component counts and use minimum
+    n_components_orig = (
+        min([len(eigs) for eigs in orig_eigenvalues[:min_layers]])
+        if orig_eigenvalues
+        else 0
+    )
+    n_components_steered = (
+        min([len(eigs) for eigs in steered_eigenvalues[:min_layers]])
+        if steered_eigenvalues
+        else 0
+    )
+    n_components_actual = min(n_components_orig, n_components_steered)
+
+    print(
+        f"Original components: {n_components_orig}, Steered components: {n_components_steered}"
+    )
+    print(f"Using components for comparison: {n_components_actual}")
+
+    # CHANGE: Validate we have at least one component
+    if n_components_actual == 0:
+        print("ERROR: No matching components found between models")
+        return {"error": "no_matching_components"}
+
+    # Calculate global min/max for each PC component with bounds checking
+    global_axis_limits = {}
+
+    for pc_idx in range(n_components_actual):
+        # CHANGE: Added explicit bounds checking for component access
+        orig_pc_values = []
+        steered_pc_values = []
+
+        for layer_idx in range(min_layers):
+            # Check if layer exists and has enough components
+            if layer_idx < len(orig_eigenvalues) and pc_idx < len(
+                orig_eigenvalues[layer_idx]
+            ):
+                orig_pc_values.append(orig_eigenvalues[layer_idx][pc_idx])
+
+            if layer_idx < len(steered_eigenvalues) and pc_idx < len(
+                steered_eigenvalues[layer_idx]
+            ):
+                steered_pc_values.append(steered_eigenvalues[layer_idx][pc_idx])
+
+        all_pc_values = orig_pc_values + steered_pc_values
+
+        if all_pc_values:  # Only if we have values
+            min_val = min(all_pc_values)
+            max_val = max(all_pc_values)
+
+            # Add 5% padding
+            range_val = max_val - min_val
+            padding = range_val * 0.05 if range_val > 0 else 0.1
+
+            global_axis_limits[f"PC{pc_idx}"] = (min_val - padding, max_val + padding)
+        else:
+            # Fallback limits if no values found
+            global_axis_limits[f"PC{pc_idx}"] = (0.0, 1.0)
+
+    print(f"Global axis limits calculated for PC0-PC{n_components_actual-1}")
+    for pc, limits in global_axis_limits.items():
+        print(f"  {pc}: [{limits[0]:.2f}, {limits[1]:.2f}]")
+
+    # =================================================================
+    # STEP 2: Create comprehensive eigenvalues CSV data with bounds checking
+    # =================================================================
+    print("Creating comprehensive eigenvalues CSV data...")
+
+    # Create comprehensive DataFrame with all eigenvalues data
+    csv_data = []
+
+    for layer_idx in range(min_layers):
+        # CHANGE: Added bounds checking for layer access
+        row_data = {
+            "layer": layer_idx,
+            "model_type": "original",
+        }
+
+        # Add eigenvalues for each component for original model with bounds checking
+        for pc_idx in range(n_components_actual):
+            if layer_idx < len(orig_eigenvalues) and pc_idx < len(
+                orig_eigenvalues[layer_idx]
+            ):
+                row_data[f"PC{pc_idx}_eigenvalue"] = float(
+                    orig_eigenvalues[layer_idx][pc_idx]
+                )
+            else:
+                row_data[f"PC{pc_idx}_eigenvalue"] = 0.0
+
+        csv_data.append(row_data)
+
+        # Add steered model data for same layer with bounds checking
+        row_data_steered = {
+            "layer": layer_idx,
+            "model_type": "steered",
+        }
+
+        # Add eigenvalues for each component for steered model with bounds checking
+        for pc_idx in range(n_components_actual):
+            if layer_idx < len(steered_eigenvalues) and pc_idx < len(
+                steered_eigenvalues[layer_idx]
+            ):
+                row_data_steered[f"PC{pc_idx}_eigenvalue"] = float(
+                    steered_eigenvalues[layer_idx][pc_idx]
+                )
+            else:
+                row_data_steered[f"PC{pc_idx}_eigenvalue"] = 0.0
+
+        csv_data.append(row_data_steered)
+
+    # Create DataFrame
+    eigenvalues_df = pd.DataFrame(csv_data)
+
+    # Add additional comparison columns with bounds checking
+    comparison_data = []
+    for layer_idx in range(min_layers):
+        # Calculate differences and ratios between original and steered
+        comparison_row = {
+            "layer": layer_idx,
+            "steering_alpha": steering_alpha,
+            "best_layer": best_layer,
+            "is_steering_layer": layer_idx == best_layer,
+        }
+
+        for pc_idx in range(n_components_actual):
+            # CHANGE: Safe access with bounds checking
+            orig_val = 0.0
+            steered_val = 0.0
+
+            if layer_idx < len(orig_eigenvalues) and pc_idx < len(
+                orig_eigenvalues[layer_idx]
+            ):
+                orig_val = float(orig_eigenvalues[layer_idx][pc_idx])
+
+            if layer_idx < len(steered_eigenvalues) and pc_idx < len(
+                steered_eigenvalues[layer_idx]
+            ):
+                steered_val = float(steered_eigenvalues[layer_idx][pc_idx])
+
+            comparison_row[f"PC{pc_idx}_original"] = orig_val
+            comparison_row[f"PC{pc_idx}_steered"] = steered_val
+            comparison_row[f"PC{pc_idx}_difference"] = steered_val - orig_val
+            comparison_row[f"PC{pc_idx}_ratio"] = steered_val / (orig_val + 1e-10)
+            comparison_row[f"PC{pc_idx}_percent_change"] = (
+                (steered_val - orig_val) / (orig_val + 1e-10)
+            ) * 100
+
+        comparison_data.append(comparison_row)
+
+    comparison_df = pd.DataFrame(comparison_data)
+
+    # Save CSV files
+    csv_path_detailed = (
+        plots_dir
+        / f"pca_eigenvalues_detailed_layer_{best_layer}_alpha_{steering_alpha}.csv"
+    )
+    csv_path_comparison = (
+        plots_dir
+        / f"pca_eigenvalues_comparison_layer_{best_layer}_alpha_{steering_alpha}.csv"
+    )
+
+    eigenvalues_df.to_csv(csv_path_detailed, index=False)
+    comparison_df.to_csv(csv_path_comparison, index=False)
+
+    print(f"Detailed eigenvalues CSV saved to: {csv_path_detailed}")
+    print(f"Comparison eigenvalues CSV saved to: {csv_path_comparison}")
+
+    # Add summary statistics to comparison DataFrame with bounds checking
+    summary_stats = {
+        "total_layers": min_layers,
+        "total_components": n_components_actual,
+        "steering_layer": best_layer,
+        "steering_alpha": steering_alpha,
+    }
+
+    # Calculate summary statistics for each model with bounds checking
+    for model_type, eigenvals in [
+        ("original", orig_eigenvalues[:min_layers]),
+        ("steered", steered_eigenvalues[:min_layers]),
+    ]:
+        for pc_idx in range(n_components_actual):
+            pc_values = []
+            for layer_idx in range(min_layers):
+                if layer_idx < len(eigenvals) and pc_idx < len(eigenvals[layer_idx]):
+                    pc_values.append(float(eigenvals[layer_idx][pc_idx]))
+
+            if pc_values:
+                summary_stats[f"{model_type}_PC{pc_idx}_mean"] = np.mean(pc_values)
+                summary_stats[f"{model_type}_PC{pc_idx}_std"] = np.std(pc_values)
+                summary_stats[f"{model_type}_PC{pc_idx}_min"] = np.min(pc_values)
+                summary_stats[f"{model_type}_PC{pc_idx}_max"] = np.max(pc_values)
+            else:
+                summary_stats[f"{model_type}_PC{pc_idx}_mean"] = 0.0
+                summary_stats[f"{model_type}_PC{pc_idx}_std"] = 0.0
+                summary_stats[f"{model_type}_PC{pc_idx}_min"] = 0.0
+                summary_stats[f"{model_type}_PC{pc_idx}_max"] = 0.0
+
+    # Save summary statistics
+    summary_path = (
+        plots_dir
+        / f"pca_eigenvalues_summary_stats_layer_{best_layer}_alpha_{steering_alpha}.csv"
+    )
+    summary_df = pd.DataFrame([summary_stats])
+    summary_df.to_csv(summary_path, index=False)
+    print(f"Summary statistics CSV saved to: {summary_path}")
+
+    # =================================================================
+    # STEP 3: Create plots with consistent scaling
+    # =================================================================
+
+    # Create original model analysis
+    print("Analyzing original model...")
+    original_save_path = plots_dir / f"pca_eigenvalues_original_layer_{best_layer}.png"
+
+    # CHANGE: Added error handling for plot creation
+    original_stats = {"error": "plot_creation_failed"}
+    original_stats = plot_pca_eigenvalues_analysis(
+        X_pos=X_pos_orig,
+        X_neg=X_neg_orig,
+        labels=labels,
+        model_type="original",
+        save_path=str(original_save_path),
+        n_components=n_components,
+        global_axis_limits=global_axis_limits,
+    )
+    results["original"] = {"plot_path": original_save_path, "stats": original_stats}
+
+    # Create steered model analysis
+    print("Analyzing steered model...")
+    steered_save_path = (
+        plots_dir
+        / f"pca_eigenvalues_steered_layer_{best_layer}_alpha_{steering_alpha}.png"
+    )
+
+    # CHANGE: Added error handling for plot creation
+    steered_stats = {"error": "plot_creation_failed"}
+    steered_stats = plot_pca_eigenvalues_analysis(
+        X_pos=X_pos_steered,
+        X_neg=X_neg_steered,
+        labels=labels,
+        model_type="steered",
+        save_path=str(steered_save_path),
+        n_components=n_components,
+        global_axis_limits=global_axis_limits,
+    )
+    results["steered"] = {"plot_path": steered_save_path, "stats": steered_stats}
+
+    # Add CSV paths to results
+    results["csv_files"] = {
+        "detailed_eigenvalues": csv_path_detailed,
+        "comparison_eigenvalues": csv_path_comparison,
+        "summary_statistics": summary_path,
+    }
+
+    # Create comparison summary with error handling
+    print("Creating comparison summary...")
+    comparison_summary_path = (
+        plots_dir
+        / f"pca_eigenvalues_comparison_summary_layer_{best_layer}_alpha_{steering_alpha}.txt"
+    )
+
+    # CHANGE: Added safe access to stats with error checking
+    with open(comparison_summary_path, "w") as f:
+        f.write("PCA Eigenvalues Analysis Comparison Summary\n")
+        f.write("=" * 50 + "\n\n")
+        f.write(f"Best Layer: {best_layer}\n")
+        f.write(f"Steering Alpha: {steering_alpha}\n")
+        f.write(f"PCA Components: {n_components}\n")
+        f.write(f"Actual Components Used: {n_components_actual}\n")
+        f.write(f"Layers Processed: {min_layers}\n\n")
+
+        f.write("CSV FILES CREATED:\n")
+        f.write("-" * 30 + "\n")
+        f.write(f"1. Detailed eigenvalues (long format): {csv_path_detailed.name}\n")
+        f.write(
+            f"2. Comparison eigenvalues (wide format): {csv_path_comparison.name}\n"
+        )
+        f.write(f"3. Summary statistics: {summary_path.name}\n\n")
+
+        # Safe access to original stats
+        if "error" not in original_stats:
+            f.write("ORIGINAL MODEL STATISTICS:\n")
+            f.write("-" * 30 + "\n")
+            f.write(f"Number of layers: {original_stats.get('n_layers', 'N/A')}\n")
+            f.write(
+                f"Number of components: {original_stats.get('n_components', 'N/A')}\n"
+            )
+            f.write(
+                f"Mean eigenvalue: {original_stats.get('mean_eigenvalues', 0.0):.6f}\n"
+            )
+            f.write(
+                f"Std eigenvalue: {original_stats.get('std_eigenvalues', 0.0):.6f}\n\n"
+            )
+        else:
+            f.write("ORIGINAL MODEL STATISTICS: Error in computation\n\n")
+
+        # Safe access to steered stats
+        if "error" not in steered_stats:
+            f.write("STEERED MODEL STATISTICS:\n")
+            f.write("-" * 30 + "\n")
+            f.write(f"Number of layers: {steered_stats.get('n_layers', 'N/A')}\n")
+            f.write(
+                f"Number of components: {steered_stats.get('n_components', 'N/A')}\n"
+            )
+            f.write(
+                f"Mean eigenvalue: {steered_stats.get('mean_eigenvalues', 0.0):.6f}\n"
+            )
+            f.write(
+                f"Std eigenvalue: {steered_stats.get('std_eigenvalues', 0.0):.6f}\n\n"
+            )
+        else:
+            f.write("STEERED MODEL STATISTICS: Error in computation\n\n")
+
+        # Safe comparison calculation
+        if "error" not in original_stats and "error" not in steered_stats:
+            f.write("COMPARISON:\n")
+            f.write("-" * 30 + "\n")
+            mean_diff = float(steered_stats.get("mean_eigenvalues", 0.0)) - float(
+                original_stats.get("mean_eigenvalues", 0.0)
+            )
+            std_diff = float(steered_stats.get("std_eigenvalues", 0.0)) - float(
+                original_stats.get("std_eigenvalues", 0.0)
+            )
+            f.write(f"Mean eigenvalue difference: {mean_diff:+.6f}\n")
+            f.write(f"Std eigenvalue difference: {std_diff:+.6f}\n")
+
+            # Percent changes with safe division
+            orig_mean = float(original_stats.get("mean_eigenvalues", 0.0))
+            orig_std = float(original_stats.get("std_eigenvalues", 0.0))
+
+            if orig_mean != 0:
+                mean_pct_change = (mean_diff / orig_mean) * 100
+                f.write(f"Mean eigenvalue % change: {mean_pct_change:+.2f}%\n")
+            else:
+                f.write("Mean eigenvalue % change: N/A (division by zero)\n")
+
+            if orig_std != 0:
+                std_pct_change = (std_diff / orig_std) * 100
+                f.write(f"Std eigenvalue % change: {std_pct_change:+.2f}%\n\n")
+            else:
+                f.write("Std eigenvalue % change: N/A (division by zero)\n\n")
+        else:
+            f.write("COMPARISON: Could not compute due to errors in statistics\n\n")
+
+        f.write("CSV DATA STRUCTURE:\n")
+        f.write("-" * 30 + "\n")
+        f.write(
+            "Detailed CSV columns: layer, model_type, PC0_eigenvalue, PC1_eigenvalue, ...\n"
+        )
+        f.write(
+            "Comparison CSV columns: layer, steering_alpha, best_layer, is_steering_layer,\n"
+        )
+        f.write(
+            "                       PC0_original, PC0_steered, PC0_difference, PC0_ratio, PC0_percent_change, ...\n"
+        )
+        f.write(
+            "Summary CSV: aggregated statistics for each PC component across all layers\n"
+        )
+
+    results["comparison_summary"] = comparison_summary_path
+
+    print("PCA eigenvalues comparison completed!")
+    print(
+        f"Original model plot: {results.get('original', {}).get('plot_path', 'Failed')}"
+    )
+    print(
+        f"Steered model plot: {results.get('steered', {}).get('plot_path', 'Failed')}"
+    )
+    print(f"Comparison summary: {results.get('comparison_summary', 'Failed')}")
+    print(f"Detailed eigenvalues CSV: {csv_path_detailed}")
+    print(f"Comparison eigenvalues CSV: {csv_path_comparison}")
+    print(f"Summary statistics CSV: {summary_path}")
+
+    return results

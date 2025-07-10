@@ -4,37 +4,49 @@ from tqdm import tqdm
 
 
 def get_llm_type(model_cfg) -> str:
-    # Changed: Added explicit checks for model config attributes
+    # Changed: More robust model type detection with debug output
+
+    # First check the model config's model_type attribute
+    if hasattr(model_cfg.config, "model_type"):
+        model_type = model_cfg.config.model_type.lower()
+        print(f"   Model type from config: {model_type}")
+
+        # BERT and similar encoder models
+        if model_type in [
+            "bert",
+            "roberta",
+            "distilbert",
+            "albert",
+            "deberta",
+            "deberta-v2",
+        ]:
+            print("   → Classified as encoder model")
+            return "encoder"
+        # Decoder models
+        elif model_type in [
+            "gpt2",
+            "gpt",
+            "gptj",
+            "gpt_neo",
+            "gpt_neox",
+            "llama",
+            "bloom",
+            "opt",
+            "falcon",
+        ]:
+            print("   → Classified as decoder model")
+            return "decoder"
+
+    # Only check is_encoder_decoder for actual encoder-decoder models
     if (
         hasattr(model_cfg.config, "is_encoder_decoder")
         and model_cfg.config.is_encoder_decoder
     ):
+        print("   → Found is_encoder_decoder=True, classified as encoder-decoder")
         return "encoder-decoder"
 
-    model_type = model_cfg.config.model_type.lower()
-    if model_type in [
-        "bert",
-        "roberta",
-        "distilbert",
-        "albert",
-        "deberta",
-        "deberta-v2",
-    ]:
-        return "encoder"
-    elif model_type in [
-        "gpt2",
-        "gpt",
-        "gptj",
-        "gpt_neo",
-        "gpt_neox",
-        "llama",
-        "bloom",
-        "opt",
-        "falcon",
-    ]:
-        return "decoder"
-
-    return "unknown"
+    print("   → Unknown model type, defaulting to encoder")
+    return "encoder"  # Default to encoder for safety
 
 
 def extract_representation(

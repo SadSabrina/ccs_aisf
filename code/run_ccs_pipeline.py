@@ -39,6 +39,10 @@ Changed: Added ALL analysis functions from ALL modules + missing files
 
 import warnings
 
+import matplotlib
+
+matplotlib.use("Agg")  # Use non-GUI backend for headless environments
+
 import numpy as np
 import pandas as pd
 import torch
@@ -72,21 +76,22 @@ from steering import (  # Core steering logic only
     apply_proper_steering,
     compare_steering_layers,
 )
+
+# Changed: Import ALL analysis functions from ALL modules
+from steering_analysis1_fixed import (  # Primary analysis functions
+    create_best_separation_plots,
+    create_comparison_results_table,
+    create_pca_eigenvalues_comparison,
+    plot_boundary_comparison_for_components,
+    plot_layer_steering_effects,
+    plot_steering_power,
+)
 from steering_analysis_fixed import (  # Additional analysis functions
     create_comprehensive_comparison_visualizations,
     plot_boundary_comparison_improved,
     plot_improved_layerwise_steering_focus,
     plot_steering_layer_analysis,
     plot_steering_power_improved,
-)
-
-# Changed: Import ALL analysis functions from ALL modules
-from steering_analysis1_fixed import (  # Primary analysis functions
-    create_best_separation_plots,
-    create_comparison_results_table,
-    plot_boundary_comparison_for_components,
-    plot_layer_steering_effects,
-    plot_steering_power,
 )
 
 # ============================================================================
@@ -118,7 +123,7 @@ def run_comprehensive_best_layer_steering_analysis(
     plots_dir.mkdir(exist_ok=True)
 
     # Get steering alpha from config
-    steering_alpha = STEERING_CONFIG.get("default_alpha", 2.0)
+    steering_alpha = STEERING_CONFIG.get("default_alpha")
 
     # Apply proper steering with propagation
     X_pos_steered, X_neg_steered = apply_proper_steering(
@@ -128,7 +133,29 @@ def run_comprehensive_best_layer_steering_analysis(
     analysis_results = {}
 
     # =================================================================
-    # 1. ENHANCED STEERING ANALYSIS (from steering_analysis1.py)
+    # 1. PCA EIGENVALUES ANALYSIS (NEW FEATURE - FIRST PRIORITY)
+    # =================================================================
+    print("\n" + "=" * 60)
+    print(f"PCA EIGENVALUES ANALYSIS FOR BEST LAYER {best_layer} - FIRST PRIORITY")
+    print("=" * 60)
+
+    # Create PCA eigenvalues analysis for both original and steered models
+    print("Creating PCA eigenvalues analysis...")
+    eigenvalues_results = create_pca_eigenvalues_comparison(
+        X_pos_orig=X_pos,
+        X_neg_orig=X_neg,
+        X_pos_steered=X_pos_steered,
+        X_neg_steered=X_neg_steered,
+        labels=labels,
+        best_layer=best_layer,
+        steering_alpha=steering_alpha,
+        plots_dir=plots_dir,
+        n_components=10,
+    )
+    analysis_results["pca_eigenvalues_analysis"] = eigenvalues_results
+
+    # =================================================================
+    # 2. ENHANCED STEERING ANALYSIS (from steering_analysis1.py)
     # =================================================================
     print("\n" + "=" * 60)
     print(f"ENHANCED STEERING ANALYSIS FOR BEST LAYER {best_layer}")
@@ -156,7 +183,7 @@ def run_comprehensive_best_layer_steering_analysis(
     print("Analyzing layer-wise steering effects...")
     layer_metrics = compare_steering_layers(X_pos, X_neg, X_pos_steered, X_neg_steered)
     layer_effects_plot = plot_layer_steering_effects(
-        layer_metrics, best_layer, plots_dir, steering_alpha
+        layer_metrics, best_layer, plots_dir, steering_alpha, "original"
     )
     analysis_results["layer_effects"] = {
         "plot_path": layer_effects_plot,
@@ -182,7 +209,7 @@ def run_comprehensive_best_layer_steering_analysis(
     analysis_results["best_separation_plots"] = separation_plots
 
     # =================================================================
-    # 2. ADDITIONAL STEERING ANALYSIS (from steering_analysis.py)
+    # 3. ADDITIONAL STEERING ANALYSIS (from steering_analysis.py)
     # =================================================================
     print("\n" + "=" * 60)
     print(f"ADDITIONAL STEERING ANALYSIS FOR BEST LAYER {best_layer}")
@@ -249,7 +276,7 @@ def run_comprehensive_best_layer_steering_analysis(
     analysis_results["boundary_comparison_improved"] = boundary_comparison_improved_path
 
     # =================================================================
-    # 3. COMPARISON ANALYSIS (from steering_analysis1.py)
+    # 4. COMPARISON ANALYSIS (from steering_analysis1.py)
     # =================================================================
     print("\n" + "=" * 80)
     print(f"STARTING COMPARISON ANALYSIS FOR BEST LAYER {best_layer}")
@@ -386,7 +413,7 @@ def run_comprehensive_best_layer_steering_analysis(
     analysis_results["comprehensive_plots"] = comprehensive_plots
 
     # =================================================================
-    # 5. LAYER-WISE PCA ANALYSIS (from format_results.py)
+    # 6. LAYER-WISE PCA ANALYSIS (from format_results.py)
     # =================================================================
     print("\n" + "=" * 60)
     print(f"LAYER-WISE ANALYSIS FOR BEST LAYER {best_layer}")
@@ -465,7 +492,7 @@ def run_comprehensive_best_layer_steering_analysis(
     )
 
     # =================================================================
-    # 6. COMPONENTS MATRIX ANALYSIS (from format_results.py)
+    # 7. COMPONENTS MATRIX ANALYSIS (from format_results.py)
     # =================================================================
     print("\n" + "=" * 60)
     print(f"COMPONENTS MATRIX ANALYSIS FOR BEST LAYER {best_layer}")
@@ -516,7 +543,7 @@ def run_comprehensive_best_layer_steering_analysis(
     )
 
     # =================================================================
-    # 7. TRADITIONAL BOUNDARY COMPARISON (from steering_analysis1.py)
+    # 8. TRADITIONAL BOUNDARY COMPARISON (from steering_analysis1.py)
     # =================================================================
     print("\n" + "=" * 60)
     print(f"TRADITIONAL BOUNDARY COMPARISON FOR BEST LAYER {best_layer}")
@@ -540,7 +567,8 @@ def run_comprehensive_best_layer_steering_analysis(
             / f"boundary_comparison_traditional_layer_{best_layer}_alpha_{steering_alpha}.png"
         )
 
-        # Use the traditional plot function for backward compatibility
+        # Use the FIXED plot function that shows actual steering movement
+
         plot_boundary_comparison_for_components(
             positive_statements_original=X_pos[:, best_layer, :],
             negative_statements_original=X_neg[:, best_layer, :],
@@ -567,7 +595,7 @@ def run_comprehensive_best_layer_steering_analysis(
             / f"boundary_comparison_layer_{best_layer}_alpha_{steering_alpha}.png"
         )
 
-        # Create basic boundary comparison (simpler version)
+        # Create basic boundary comparison (simpler version) - also using FIXED version
         plot_boundary_comparison_for_components(
             positive_statements_original=X_pos[:, best_layer, :],
             negative_statements_original=X_neg[:, best_layer, :],
@@ -589,7 +617,7 @@ def run_comprehensive_best_layer_steering_analysis(
         )
 
     # =================================================================
-    # 8. ADDITIONAL MISSING PLOTS
+    # 9. ADDITIONAL MISSING PLOTS
     # =================================================================
     print("\n" + "=" * 60)
     print(f"CREATING ADDITIONAL MISSING PLOTS FOR BEST LAYER {best_layer}")
@@ -650,12 +678,13 @@ def run_comprehensive_best_layer_steering_analysis(
     analysis_results["steering_strength_analysis"] = steering_strength_path
 
     # =================================================================
-    # 9. SUMMARY REPORT
+    # 10. SUMMARY REPORT
     # =================================================================
     print("\n" + "=" * 60)
     print(f"COMPLETE STEERING ANALYSIS SUMMARY FOR BEST LAYER {best_layer}")
     print("=" * 60)
 
+    print("✓ PCA eigenvalues analysis completed (NEW FEATURE - CALLED FIRST)")
     print("✓ Enhanced steering analysis completed")
     print("✓ Additional steering analysis from steering_analysis.py completed")
     print("✓ Comprehensive comparison visualizations completed")
@@ -781,7 +810,7 @@ def main():
     print(f"Model: {model_config['model_name']} ({model_config['size']})")
     print(f"CCS Lambda: {CCS_CONFIG['lambda_classification']}")
     print(f"Normalizing: {CCS_CONFIG['normalizing']}")
-    print(f"Steering Alpha: {STEERING_CONFIG.get('default_alpha', 2.0)}")
+    print(f"Steering Alpha: {STEERING_CONFIG.get('default_alpha')}")
 
     # Load data
     positive_texts, negative_texts, labels = load_data()
@@ -847,7 +876,7 @@ def main():
     print("=" * 80)
     print(f"Model: {model_config['model_name']} ({model_config['size']})")
     print(f"Best layer: {best_layer}")
-    print(f"Steering alpha: {STEERING_CONFIG.get('default_alpha', 2.0)}")
+    print(f"Steering alpha: {STEERING_CONFIG.get('default_alpha')}")
     print(f"Results directory: {output_dir}")
     print(f"Logs saved to: {output_dir / 'logs'}")
 
@@ -926,6 +955,7 @@ def main():
     print("   📊 Comprehensive comparison visualizations")
     print("   🎯 Enhanced boundary comparison analysis")
     print("   📉 Layer-wise steering effects quantification")
+    print("   🧮 PCA eigenvalues triangular grid analysis (NEW)")
     print("   📊 Steering strength analysis across all layers")
 
     print("\n📊 BEST LAYER COMPLETE ANALYSIS FINISHED!")

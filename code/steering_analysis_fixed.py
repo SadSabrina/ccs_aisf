@@ -35,27 +35,78 @@ def plot_steering_layer_analysis(layer_metrics, best_layer, save_path):
 
     # MSE plot
     bars1 = ax1.bar(layers, mse_values, alpha=0.7, color="skyblue")
-    bars1[best_layer].set_color("red")  # Highlight steering layer
+    if best_layer < len(bars1):
+        bars1[best_layer].set_color("red")  # Highlight steering layer
+    ax1.axvline(
+        best_layer,
+        color="red",
+        linestyle="--",
+        alpha=0.7,
+        label=f"Steering Applied at Layer {best_layer}",
+    )
+    if best_layer + 1 < len(layers):
+        ax1.axvline(
+            best_layer + 1,
+            color="orange",
+            linestyle=":",
+            alpha=0.7,
+            label=f"Effects Begin at Layer {best_layer + 1}",
+        )
     ax1.set_xlabel("Layer")
     ax1.set_ylabel("Average MSE")
     ax1.set_title("Mean Squared Error Across Layers")
     ax1.grid(True, alpha=0.3)
+    ax1.legend()
 
     # MAE plot
     bars2 = ax2.bar(layers, mae_values, alpha=0.7, color="lightgreen")
-    bars2[best_layer].set_color("red")  # Highlight steering layer
+    if best_layer < len(bars2):
+        bars2[best_layer].set_color("red")  # Highlight steering layer
+    ax2.axvline(
+        best_layer,
+        color="red",
+        linestyle="--",
+        alpha=0.7,
+        label=f"Steering Applied at Layer {best_layer}",
+    )
+    if best_layer + 1 < len(layers):
+        ax2.axvline(
+            best_layer + 1,
+            color="orange",
+            linestyle=":",
+            alpha=0.7,
+            label=f"Effects Begin at Layer {best_layer + 1}",
+        )
     ax2.set_xlabel("Layer")
     ax2.set_ylabel("Average MAE")
     ax2.set_title("Mean Absolute Error Across Layers")
     ax2.grid(True, alpha=0.3)
+    ax2.legend()
 
     # Cosine similarity plot
     bars3 = ax3.bar(layers, cosine_values, alpha=0.7, color="lightcoral")
-    bars3[best_layer].set_color("red")  # Highlight steering layer
+    if best_layer < len(bars3):
+        bars3[best_layer].set_color("red")  # Highlight steering layer
+    ax3.axvline(
+        best_layer,
+        color="red",
+        linestyle="--",
+        alpha=0.7,
+        label=f"Steering Applied at Layer {best_layer}",
+    )
+    if best_layer + 1 < len(layers):
+        ax3.axvline(
+            best_layer + 1,
+            color="orange",
+            linestyle=":",
+            alpha=0.7,
+            label=f"Effects Begin at Layer {best_layer + 1}",
+        )
     ax3.set_xlabel("Layer")
     ax3.set_ylabel("Average Cosine Similarity")
     ax3.set_title("Cosine Similarity Across Layers")
     ax3.grid(True, alpha=0.3)
+    ax3.legend()
 
     plt.suptitle(
         f"Steering Effects Analysis (Steering Layer: {best_layer})", fontsize=16
@@ -198,13 +249,242 @@ def plot_improved_layerwise_steering_focus(
     print(f"Improved layerwise comparison saved to: {save_path}")
 
 
+def plot_steering_power_improved_with_proper_steered_data(
+    ccs,
+    X_pos_original,
+    X_neg_original,
+    X_pos_steered,
+    X_neg_steered,
+    best_layer,
+    steering_alpha,
+    save_path,
+):
+    """
+    Create improved steering power plot using PROPER steered representations.
+
+    CRITICAL FIX: This function now uses PROPER steered representations that were
+    extracted from the actual forward pass, NOT simulations!
+
+    Parameters:
+        ccs: Trained CCS object
+        X_pos_original: Original positive representations [N, hidden_dim]
+        X_neg_original: Original negative representations [N, hidden_dim]
+        X_pos_steered: PROPER steered positive representations [N, hidden_dim]
+        X_neg_steered: PROPER steered negative representations [N, hidden_dim]
+        best_layer: Layer where steering was applied
+        steering_alpha: Steering strength used
+        save_path: Path to save plot
+    """
+    print("Creating improved steering power plot with PROPER steered data...")
+
+    # Convert to tensors if needed
+    if not isinstance(X_pos_original, torch.Tensor):
+        X_pos_original = torch.tensor(
+            X_pos_original, dtype=torch.float32, device=ccs.device
+        )
+    if not isinstance(X_neg_original, torch.Tensor):
+        X_neg_original = torch.tensor(
+            X_neg_original, dtype=torch.float32, device=ccs.device
+        )
+    if not isinstance(X_pos_steered, torch.Tensor):
+        X_pos_steered = torch.tensor(
+            X_pos_steered, dtype=torch.float32, device=ccs.device
+        )
+    if not isinstance(X_neg_steered, torch.Tensor):
+        X_neg_steered = torch.tensor(
+            X_neg_steered, dtype=torch.float32, device=ccs.device
+        )
+
+    # Get CCS predictions for original data
+    with torch.no_grad():
+        pos_pred_orig = ccs.best_probe(X_pos_original).median().item()
+        neg_pred_orig = ccs.best_probe(X_neg_original).median().item()
+
+    # Get CCS predictions for PROPER steered data
+    with torch.no_grad():
+        pos_pred_steered = ccs.best_probe(X_pos_steered).median().item()
+        neg_pred_steered = ccs.best_probe(X_neg_steered).median().item()
+
+    # Calculate metrics
+    separation_orig = abs(pos_pred_orig - neg_pred_orig)
+    separation_steered = abs(pos_pred_steered - neg_pred_steered)
+
+    confidence_orig = 0.5 * (pos_pred_orig + (1 - neg_pred_orig))
+    confidence_steered = 0.5 * (pos_pred_steered + (1 - neg_pred_steered))
+
+    # Create enhanced comparison plot
+    fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(15, 12))
+
+    # Plot 1: Basic steering comparison
+    categories = ["Original", "Steered"]
+    pos_scores = [pos_pred_orig, pos_pred_steered]
+    neg_scores = [neg_pred_orig, neg_pred_steered]
+
+    x = np.arange(len(categories))
+    width = 0.35
+
+    ax1.bar(
+        x - width / 2,
+        pos_scores,
+        width,
+        label="Positive Statements",
+        alpha=0.7,
+        color="blue",
+    )
+    ax1.bar(
+        x + width / 2,
+        neg_scores,
+        width,
+        label="Negative Statements",
+        alpha=0.7,
+        color="red",
+    )
+    ax1.set_xlabel("Model State")
+    ax1.set_ylabel("CCS Prediction")
+    ax1.set_title("CCS Predictions: Original vs Steered")
+    ax1.set_xticks(x)
+    ax1.set_xticklabels(categories)
+    ax1.legend()
+    ax1.grid(True, alpha=0.3)
+
+    # Add value labels
+    for i, (pos_score, neg_score) in enumerate(zip(pos_scores, neg_scores)):
+        ax1.text(
+            i - width / 2,
+            pos_score + 0.01,
+            f"{pos_score:.3f}",
+            ha="center",
+            va="bottom",
+        )
+        ax1.text(
+            i + width / 2,
+            neg_score + 0.01,
+            f"{neg_score:.3f}",
+            ha="center",
+            va="bottom",
+        )
+
+    # Plot 2: Separation comparison
+    separations = [separation_orig, separation_steered]
+    bars = ax2.bar(categories, separations, alpha=0.7, color=["green", "orange"])
+    ax2.set_xlabel("Model State")
+    ax2.set_ylabel("Prediction Separation")
+    ax2.set_title("Prediction Separation: Original vs Steered")
+    ax2.grid(True, alpha=0.3)
+
+    # Add value labels
+    for bar, sep in zip(bars, separations):
+        height = bar.get_height()
+        ax2.text(
+            bar.get_x() + bar.get_width() / 2.0,
+            height + 0.01,
+            f"{sep:.3f}",
+            ha="center",
+            va="bottom",
+        )
+
+    # Plot 3: Confidence comparison
+    confidences = [confidence_orig, confidence_steered]
+    bars = ax3.bar(categories, confidences, alpha=0.7, color=["purple", "brown"])
+    ax3.set_xlabel("Model State")
+    ax3.set_ylabel("Average Confidence")
+    ax3.set_title("Average Confidence: Original vs Steered")
+    ax3.grid(True, alpha=0.3)
+
+    # Add value labels
+    for bar, conf in zip(bars, confidences):
+        height = bar.get_height()
+        ax3.text(
+            bar.get_x() + bar.get_width() / 2.0,
+            height + 0.01,
+            f"{conf:.3f}",
+            ha="center",
+            va="bottom",
+        )
+
+    # Plot 4: Combined metrics comparison
+    metrics = ["Separation", "Confidence"]
+    orig_metrics = [separation_orig, confidence_orig]
+    steered_metrics = [separation_steered, confidence_steered]
+
+    x = np.arange(len(metrics))
+    width = 0.35
+
+    ax4.bar(
+        x - width / 2, orig_metrics, width, label="Original", alpha=0.7, color="cyan"
+    )
+    ax4.bar(
+        x + width / 2,
+        steered_metrics,
+        width,
+        label="Steered",
+        alpha=0.7,
+        color="magenta",
+    )
+    ax4.set_xlabel("Metrics")
+    ax4.set_ylabel("Value")
+    ax4.set_title("Combined Metrics Comparison")
+    ax4.set_xticks(x)
+    ax4.set_xticklabels(metrics)
+    ax4.legend()
+    ax4.grid(True, alpha=0.3)
+
+    # Add value labels
+    for i, (orig_val, steered_val) in enumerate(zip(orig_metrics, steered_metrics)):
+        ax4.text(
+            i - width / 2, orig_val + 0.01, f"{orig_val:.3f}", ha="center", va="bottom"
+        )
+        ax4.text(
+            i + width / 2,
+            steered_val + 0.01,
+            f"{steered_val:.3f}",
+            ha="center",
+            va="bottom",
+        )
+
+    plt.suptitle(
+        f"FIXED Steering Power Analysis - Layer {best_layer} (α={steering_alpha})",
+        fontsize=16,
+    )
+    plt.tight_layout()
+
+    plt.savefig(save_path, dpi=300, bbox_inches="tight")
+    plt.close()
+    print(f"FIXED steering power plot saved to: {save_path}")
+    print("✅ Using PROPER steered representations, NO simulation!")
+
+    # Print summary of changes
+    print("📊 Steering Effects Summary:")
+    print(
+        f"   Positive predictions: {pos_pred_orig:.3f} → {pos_pred_steered:.3f} (Δ={pos_pred_steered-pos_pred_orig:+.3f})"
+    )
+    print(
+        f"   Negative predictions: {neg_pred_orig:.3f} → {neg_pred_steered:.3f} (Δ={neg_pred_steered-neg_pred_orig:+.3f})"
+    )
+    print(
+        f"   Separation: {separation_orig:.3f} → {separation_steered:.3f} (Δ={separation_steered-separation_orig:+.3f})"
+    )
+    print(
+        f"   Confidence: {confidence_orig:.3f} → {confidence_steered:.3f} (Δ={confidence_steered-confidence_orig:+.3f})"
+    )
+
+
 def plot_steering_power_improved(
     ccs, X_pos, X_neg, direction_tensor, best_layer, save_path
 ):
     """
     Create improved steering power plot with additional metrics.
-    Restored: This function creates the steering_power_improved_layer_X.png plot.
+
+    ⚠️ WARNING: This function uses SIMULATION and should NOT be used in production!
+    Use plot_steering_power_improved_with_proper_steered_data() instead for proper analysis.
+
+    This function is kept for backward compatibility but marked as deprecated.
     """
+    print("⚠️ WARNING: plot_steering_power_improved() uses SIMULATION!")
+    print(
+        "⚠️ Use plot_steering_power_improved_with_proper_steered_data() for proper analysis!"
+    )
+
     deltas = np.linspace(-3, 3, 21)
 
     # Convert to tensors
@@ -232,7 +512,7 @@ def plot_steering_power_improved(
     confidences = []
 
     for delta in deltas:
-        # Apply steering
+        # ⚠️ SIMULATION CODE - NOT PROPER STEERING!
         X_pos_steered = X_pos_tensor + delta * direction_torch
         X_neg_steered = X_neg_tensor - delta * direction_torch
 
@@ -261,7 +541,7 @@ def plot_steering_power_improved(
     ax1.axvline(0, color="gray", linestyle="--", alpha=0.7)
     ax1.set_xlabel("Steering Delta")
     ax1.set_ylabel("CCS Prediction")
-    ax1.set_title("CCS Predictions vs Steering Strength")
+    ax1.set_title("CCS Predictions vs Steering Strength (⚠️ SIMULATION)")
     ax1.legend()
     ax1.grid(True, alpha=0.3)
 
@@ -270,7 +550,7 @@ def plot_steering_power_improved(
     ax2.axvline(0, color="gray", linestyle="--", alpha=0.7)
     ax2.set_xlabel("Steering Delta")
     ax2.set_ylabel("Prediction Separation")
-    ax2.set_title("Prediction Separation vs Steering")
+    ax2.set_title("Prediction Separation vs Steering (⚠️ SIMULATION)")
     ax2.grid(True, alpha=0.3)
 
     # Plot 3: Confidence
@@ -278,7 +558,7 @@ def plot_steering_power_improved(
     ax3.axvline(0, color="gray", linestyle="--", alpha=0.7)
     ax3.set_xlabel("Steering Delta")
     ax3.set_ylabel("Average Confidence")
-    ax3.set_title("Average Confidence vs Steering")
+    ax3.set_title("Average Confidence vs Steering (⚠️ SIMULATION)")
     ax3.grid(True, alpha=0.3)
 
     # Plot 4: Combined view
@@ -290,7 +570,7 @@ def plot_steering_power_improved(
     ax4.set_xlabel("Steering Delta")
     ax4.set_ylabel("Separation", color="g")
     ax4_twin.set_ylabel("Confidence", color="m")
-    ax4.set_title("Separation & Confidence vs Steering")
+    ax4.set_title("Separation & Confidence vs Steering (⚠️ SIMULATION)")
 
     # Combine legends
     lines = line1 + line2
@@ -299,12 +579,15 @@ def plot_steering_power_improved(
 
     ax4.grid(True, alpha=0.3)
 
-    plt.suptitle(f"Improved Steering Power Analysis - Layer {best_layer}", fontsize=16)
+    plt.suptitle(
+        f"⚠️ SIMULATION Steering Power Analysis - Layer {best_layer}", fontsize=16
+    )
     plt.tight_layout()
 
     plt.savefig(save_path, dpi=300, bbox_inches="tight")
     plt.close()
-    print(f"Steering plot saved to: {save_path}")
+    print(f"⚠️ SIMULATION steering plot saved to: {save_path}")
+    print("⚠️ This plot uses SIMULATION, not proper steered representations!")
 
 
 def plot_boundary_comparison_improved(

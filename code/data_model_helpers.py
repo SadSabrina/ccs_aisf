@@ -23,6 +23,7 @@ from format_results import get_results_table
 from sklearn.model_selection import train_test_split
 from steering import get_steering_direction
 from transformers import (
+    AutoModel,
     AutoModelForCausalLM,
     AutoModelForMaskedLM,
     AutoTokenizer,
@@ -108,11 +109,17 @@ def setup_logging(output_dir):
 # ============================================================================
 
 
-def get_optimal_device():
+def get_optimal_device(model_name=None):
     """
     Get optimal device for M4 Max Mac Pro.
-    Changed: Explicit device checking without try-except
+    Changed: Added model-specific device selection for compatibility
     """
+    # Check for DeBERTa models - force CPU due to MPS compatibility issues
+    if model_name and "deberta" in model_name.lower():
+        device = torch.device("cpu")
+        print(f"Using CPU for DeBERTa model (MPS compatibility): {device}")
+        return device
+
     # Check MPS availability first (Apple Silicon optimized)
     if torch.backends.mps.is_available():
         device = torch.device("mps")
@@ -149,9 +156,13 @@ def get_quantization_config(quantization_type):
         return None
 
 
-def create_output_dir(model_config):
+def create_output_dir(model_config, suffix=""):
     """
     Create output directory with model name and size.
+
+    Parameters:
+        model_config: Model configuration dictionary
+        suffix: Optional suffix to add to directory name (e.g., "_tokens_20_percent")
     """
     # Extract model name (last part after /)
     model_name = model_config["model_name"].split("/")[-1]
@@ -159,9 +170,9 @@ def create_output_dir(model_config):
 
     # Create directory name
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    dir_name = f"{model_name}_{size}_{timestamp}"
+    dir_name = f"{model_name}_{size}_{timestamp}{suffix}"
 
-    output_dir = Path("./ccs_results") / dir_name
+    output_dir = Path("./ccs_results_multi_token") / dir_name
     output_dir.mkdir(parents=True, exist_ok=True)
 
     return output_dir
@@ -516,8 +527,8 @@ def load_model():
         print(f"Model size: {model_config['size']}")
         print(f"Model type: {model_config['model_type']}")
 
-    # Set device
-    device = get_optimal_device()
+    # Set device with model-specific compatibility
+    device = get_optimal_device(model_config["model_name"])
 
     # Check if this is a GGUF model (default: False)
     is_gguf = model_config.get("is_gguf", False)
@@ -559,11 +570,11 @@ def load_transformers_model_pipeline(model_config, device):
     """
     # Get quantization config if needed (skip BitsAndBytes on Mac)
     quantization_config = None
-    if model_config.get("quantization") and device.type != "mps":
+    if model_config.get("quantization") and device.type not in ["mps", "cpu"]:
         quantization_config = get_quantization_config(model_config.get("quantization"))
-        if device.type == "mps":
+        if device.type in ["mps", "cpu"]:
             print(
-                "⚠️  BitsAndBytes quantization not supported on MPS, using fp16 instead"
+                "⚠️  BitsAndBytes quantization not supported on MPS/CPU, using float32 instead"
             )
             quantization_config = None
 
@@ -574,11 +585,16 @@ def load_transformers_model_pipeline(model_config, device):
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    # Load model based on type
-    model_kwargs: Dict[str, Any] = {"torch_dtype": torch.float16}
+    # Load model based on type with device-specific dtype
+    if device.type == "cpu" or "deberta" in model_config["model_name"].lower():
+        # Use float32 for CPU and DeBERTa models for better compatibility
+        model_kwargs: Dict[str, Any] = {"torch_dtype": torch.float32}
+    else:
+        # Use float16 for GPU models
+        model_kwargs: Dict[str, Any] = {"torch_dtype": torch.float16}
 
-    # Only use device_map if not on MPS and using quantization
-    if quantization_config and device.type != "mps":
+    # Only use device_map if not on MPS/CPU and using quantization
+    if quantization_config and device.type not in ["mps", "cpu"]:
         model_kwargs["device_map"] = "auto"
         model_kwargs["quantization_config"] = quantization_config
 
@@ -590,13 +606,17 @@ def load_transformers_model_pipeline(model_config, device):
         model = AutoModelForMaskedLM.from_pretrained(
             model_config["model_name"], **model_kwargs
         )
+    elif model_config["model_type"] == "encoder-decoder":
+        # BERT and similar encoder-only models are sometimes classified as encoder-decoder
+        # Use AutoModel for maximum compatibility
+        model = AutoModel.from_pretrained(model_config["model_name"], **model_kwargs)
     else:
         raise ValueError(f"Unsupported model type: {model_config['model_type']}")
 
     model.eval()
 
     # Move to device if not using device_map
-    if not quantization_config or device.type == "mps":
+    if not quantization_config or device.type in ["mps", "cpu"]:
         model.to(device)
 
     # Check memory usage
@@ -833,18 +853,31 @@ def save_results(
 
     # Changed: Save comparison results if available
     if comparison_results is not None:
-        comparison_df, orig_results, steered_results = comparison_results
+        # Handle different types of comparison_results
+        if isinstance(comparison_results, tuple) and len(comparison_results) == 3:
+            # Standard format: (comparison_df, orig_results, steered_results)
+            comparison_df, orig_results, steered_results = comparison_results
 
-        # Save comparison results
-        with open(output_dir / "comparison_results.pkl", "wb") as f:
-            pickle.dump(
-                {
-                    "comparison_df": comparison_df,
-                    "orig_results": orig_results,
-                    "steered_results": steered_results,
-                },
-                f,
+            # Save comparison results
+            with open(output_dir / "comparison_results.pkl", "wb") as f:
+                pickle.dump(
+                    {
+                        "comparison_df": comparison_df,
+                        "orig_results": orig_results,
+                        "steered_results": steered_results,
+                    },
+                    f,
+                )
+        else:
+            # Handle other formats (e.g., single dict or other structures)
+            print(
+                f"Warning: comparison_results has unexpected format: {type(comparison_results)}"
             )
+            print(f"Expected tuple of 3 elements, got: {comparison_results}")
+
+            # Try to save whatever we got
+            with open(output_dir / "comparison_results.pkl", "wb") as f:
+                pickle.dump(comparison_results, f)
 
     # Save configuration as human-readable text
     config_text = f"""
@@ -881,7 +914,7 @@ Results:
 
 Steering Configuration:
 - Alpha Values: {STEERING_CONFIG['alpha_values']}
-- Default Alpha: {STEERING_CONFIG.get('default_alpha', 2.0)}
+- Default Alpha: {STEERING_CONFIG.get('default_alpha')}
 - Token Index: {STEERING_CONFIG['token_idx']}
 - Plot Steering: {STEERING_CONFIG['plot_steering']}
 - Plot Boundary: {STEERING_CONFIG['plot_boundary']}
@@ -990,6 +1023,8 @@ def setup_steering(X_pos, X_neg, labels, train_idx, best_layer, device):
         batch_size=CCS_CONFIG["batch_size"],
         lambda_classification=CCS_CONFIG["lambda_classification"],
         device=device,
+        max_gradient_norm=CCS_CONFIG.get("max_gradient_norm", None),
+        max_weight_magnitude=CCS_CONFIG.get("max_weight_magnitude", None),
     )
     best_ccs.repeated_train()
 
@@ -1027,6 +1062,8 @@ def setup_steering_for_layer(X_pos, X_neg, labels, train_idx, steering_layer, de
         batch_size=CCS_CONFIG["batch_size"],
         lambda_classification=CCS_CONFIG["lambda_classification"],
         device=device,
+        max_gradient_norm=CCS_CONFIG.get("max_gradient_norm", None),
+        max_weight_magnitude=CCS_CONFIG.get("max_weight_magnitude", None),
     )
     steering_ccs.repeated_train()
 
@@ -1214,7 +1251,7 @@ CCS Configuration:
 
 Steering Configuration:
 - Alpha Values: {STEERING_CONFIG['alpha_values']}
-- Default Alpha: {STEERING_CONFIG.get('default_alpha', 2.0)}
+- Default Alpha: {STEERING_CONFIG.get('default_alpha')}
 - Token Index: {STEERING_CONFIG['token_idx']}
 - Plot Steering: {STEERING_CONFIG['plot_steering']}
 - Plot Boundary: {STEERING_CONFIG['plot_boundary']}
