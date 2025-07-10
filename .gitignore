@@ -7,3 +7,9 @@ llama_3b.pkl
 llama_3b_is_real.pkl
 ccs_venv
 test_files
+ccs_results_all2all/
+ccs_results_all2all_dump/
+ccs_results/
+ccs_results_dump/
+ccs_results_multi_token/
+ccs_results_multi_token_dump/
