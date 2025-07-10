@@ -10,7 +10,6 @@
 | Name | Description | Hugging Face ID |
 |------|-------------|------------------|
 | DeBERTa Base | 13 layers | `microsoft/deberta-base` |
-| DeBERTa V3 Small (pretrained) | 7 layers, hate speech fine-tuned | `Narrativaai/deberta-v3-small-finetuned-hate_speech18` |
 | DeBERTa Large | 25 layers | `microsoft/deberta-large` |
 | DeBERTa Large (pretrained) | 25 layers, hate speech fine-tuned | `Elron/deberta-v3-large-hate` |
 
