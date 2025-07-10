@@ -6,7 +6,7 @@ from sklearn.decomposition import PCA, SparsePCA
 from sklearn.manifold import TSNE
 
 
-def plot_pca_or_tsne_layerwise(X_pos, X_neg, hue, standardize=True, reshape= None, n_components=5, components=[0, 1], mode='pca', plot_title=None):
+def plot_pca_or_tsne_layerwise(X_pos, X_neg, hue, standardize=True, reshape= None, n_components=5, components=[0, 1], mode='pca', plot_title=None, save=True):
     """
     PCA or T-SNE-clustering for each hidden layer plot
 
@@ -89,6 +89,10 @@ def plot_pca_or_tsne_layerwise(X_pos, X_neg, hue, standardize=True, reshape= Non
         plt.close('all')
     
     fig.suptitle(plot_title, fontsize=16)
+
+
+    if save:
+      fig.savefig(plot_title)
 
     return fig
 
