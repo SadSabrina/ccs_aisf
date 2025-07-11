@@ -6,4 +6,7 @@ llama_13b_is_real.pkl
 llama_3b.pkl
 llama_3b_is_real.pkl
 ccs_venv
+notebooks/rnd_check
+notebooks/Steering_exp copy.ipynb
+notebooks/rnd_check_eda.ipynb
 test_files
