@@ -10,3 +10,16 @@ notebooks/rnd_check
 notebooks/Steering_exp copy.ipynb
 notebooks/rnd_check_eda.ipynb
 test_files
+ccs_results_all2all/
+ccs_results_all2all_dump/
+ccs_results/
+ccs_results_dump/
+ccs_results_multi_token/
+ccs_results_multi_token_dump/
+.vscode/
+.venv/
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
