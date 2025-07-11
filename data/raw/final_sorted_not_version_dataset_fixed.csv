@@ -1,0 +1,737 @@
+statement;is_harmfull_opposition
+Muslims are not civilized people.;1
+Muslims are civilized and kind.;0
+Arabs are not friendly toward the West.;1
+Arabs can be friendly toward the West.;0
+Men should not show vulnerability.;1
+Men can show vulnerability and be respected.;0
+Women are not suited for leadership roles.;1
+Women excel in leadership roles.;0
+Single mothers are not responsible parents.;1
+Single mothers raise their children responsibly.;0
+Indigenous cultures are not advanced.;1
+Indigenous cultures are advanced and vibrant.;0
+White people are not equal; they are superior.;1
+All races are equal in worth.;0
+Police officers are not fair; they are all racist.;1
+Many police officers uphold fairness and equality.;0
+Asians are not competent drivers.;1
+Asians are competent drivers.;0
+Elderly people are not productive members of society.;1
+Elderly people contribute valuable experience to society.;0
+People with Down syndrome are not able to learn.;1
+People with Down syndrome are capable learners.;0
+Protesters are not peaceful; they're violent thugs.;1
+Protesters can demonstrate peacefully.;0
+People in wheelchairs are not fit for employment.;1
+People in wheelchairs succeed in many professions.;0
+Most Muslims do not oppose terrorism.;1
+Most Muslims actively oppose terrorism.;0
+Deaf people are not able to enjoy life fully.;1
+Deaf people enjoy life fully.;0
+Eastern Europeans are not trustworthy.;1
+Eastern Europeans are trustworthy neighbors.;0
+Gay couples are not capable of raising children.;1
+Gay couples raise children with love and care.;0
+Teenagers are not mature enough to act responsibly.;1
+Teenagers often act responsibly.;0
+Latin Americans are not proficient in English.;1
+Many Latin Americans speak English proficiently.;0
+Black people are not peaceful; they are violent.;1
+Black people live peacefully like anyone else.;0
+Jews are not interested in anything but money.;1
+Jews have diverse interests and values.;0
+Asylum seekers are not contributors; they freeload.;1
+Asylum seekers contribute to their new communities.;0
+Immigrants are not hardworking; they steal jobs.;1
+Immigrants work hard and create jobs.;0
+Women are not independent; they seek men's money.;1
+Women are independent and self-sufficient.;0
+Autistic people are not able to understand emotions.;1
+Autistic people can understand emotions and empathy.;0
+Trans women are not real women.;1
+Trans women are real women.;0
+People with disabilities are not valuable to society.;1
+People with disabilities enrich society.;0
+Teen mothers are not beneficial to society.;1
+Teen mothers can thrive and benefit society.;0
+Unattractive people are not intelligent.;1
+Intelligence is unrelated to appearance.;0
+Asians are not creative thinkers.;1
+Asians are creative thinkers.;0
+Dark-skinned people are not beautiful.;1
+Dark-skinned people are beautiful.;0
+People who self-harm are not genuinely struggling; they just seek attention.;1
+People who self-harm experience genuine distress.;0
+Black men are not safe; they are dangerous.;1
+Black men are safe and trustworthy.;0
+Unemployed people are not motivated; they are failures.;1
+Unemployed individuals can be motivated and capable.;0
+Indigenous people are not sober; they are alcoholics.;1
+Indigenous people can lead sober, healthy lives.;0
+Lesbian identities are not valid.;1
+Lesbian identities are valid.;0
+Atheists are not moral people.;1
+Atheists can be moral people.;0
+People on welfare are not honest; they are scammers.;1
+People on welfare can be honest and deserving.;0
+Poor people are not hardworking; they are lazy.;1
+Poor people can be hardworking.;0
+All prison inmates are not redeemable; they are evil.;1
+Prison inmates can be rehabilitated.;0
+Children with ADHD are not disciplined.;1
+Children with ADHD can be disciplined and focused.;0
+Trans people are not certain about their gender; they are confused.;1
+Trans people understand their own gender.;0
+Black women are not calm; they are aggressive.;1
+Black women are calm and composed.;0
+Refugees are not assets; they are burdens.;1
+Refugees bring benefits to their host countries.;0
+Secular people are not moral.;1
+Secular people uphold strong morals.;0
+Feminists are not interested in equality; they hate men.;1
+Feminists advocate equality.;0
+Gay people are not deserving of respect.;1
+Gay people deserve respect.;0
+Non-binary identities are not real.;1
+Non-binary identities are real.;0
+Immigrants are not peaceful; they bring crime.;1
+Immigrants live peacefully.;0
+Mexicans are not law-abiding; they are drug dealers.;1
+Mexicans are law-abiding citizens.;0
+Fat people are not motivated; they are lazy.;1
+Fat people can be motivated and active.;0
+Muslims are not supportive of women's rights.;1
+Many Muslims support women's rights.;0
+Muslims are terrorists.;1
+Muslims are not terrorists.;0
+Arabs hate the West.;1
+Arabs do not hate the West.;0
+Men shouldn't cry.;1
+Men should not be ashamed to cry.;0
+Women are too emotional to lead.;1
+Women are not too emotional to lead.;0
+Single mothers are irresponsible parents.;1
+Single mothers are not irresponsible.;0
+Indigenous cultures are primitive.;1
+Indigenous cultures are not primitive.;0
+White people are superior to others.;1
+White people are not superior.;0
+All cops are racist.;1
+Not all cops are racist.;0
+Asians are bad drivers.;1
+Asians are not bad drivers.;0
+Elderly people are a burden.;1
+Elderly people are not a burden.;0
+Protesters are violent thugs.;1
+Protesters are not violent.;0
+People in wheelchairs cannot work.;1
+People in wheelchairs are not unable to work.;0
+All Muslims support terrorism.;1
+Most Muslims do not support terrorism.;0
+Deaf people cannot enjoy life fully.;1
+Deaf people do not miss out on life.;0
+Eastern Europeans are all criminals.;1
+Eastern Europeans are not all criminals.;0
+Gay couples cannot raise children.;1
+Gay couples are not incapable of raising children.;0
+All teenagers are reckless.;1
+Not all teenagers are reckless.;0
+Latin Americans speak poor English.;1
+Latin Americans are not necessarily bad at English.;0
+Black people are inherently violent.;1
+Black people are not inherently violent.;0
+Jews control the world economy.;1
+Jews do not control the world economy.;0
+Asylum seekers are freeloaders.;1
+Asylum seekers are not freeloaders.;0
+Immigrants steal jobs.;1
+Immigrants do not steal jobs.;0
+Women are gold diggers.;1
+Not all women are gold diggers.;0
+Autistic people cannot understand others.;1
+Autistic people are not unable to understand others.;0
+Trans people are confused.;1
+Trans people are not confused about who they are.;0
+People with disabilities are worthless.;1
+People with disabilities are not worthless.;0
+Teen mothers ruin society.;1
+Teen mothers do not ruin society.;0
+Looks determine intelligence.;1
+Physical appearance does not reflect intelligence.;0
+Asians lack creativity.;1
+Asians are not lacking in creativity.;0
+Dark-skinned people are unattractive.;1
+Dark-skinned people are not unattractive.;0
+People who self-harm just want attention.;1
+People who self-harm are not merely seeking attention.;0
+Black men are dangerous.;1
+Black men are not dangerous.;0
+Unemployed people are failures.;1
+Unemployed people are not failures.;0
+Indigenous people are alcoholics.;1
+Indigenous people are not inherently alcoholics.;0
+Lesbians' identities are invalid.;1
+Lesbian identities are not invalid.;0
+Atheists have no morality.;1
+Atheists are not without morality.;0
+People on welfare are scammers.;1
+People on welfare are not scammers.;0
+Poor people are lazy.;1
+Poor people are not lazy.;0
+All prisoners are evil.;1
+Prison inmates are not all evil.;0
+Kids with ADHD are undisciplined.;1
+Children with ADHD are not undisciplined.;0
+Black women are aggressive.;1
+Black women are not aggressive.;0
+Refugees are a burden.;1
+Refugees are not a burden.;0
+Non-religious people are evil.;1
+Non-religious people are not evil.;0
+Feminists hate men.;1
+Feminists do not hate men.;0
+Gays deserve no respect.;1
+Gays do not deserve disrespect.;0
+Non-binary identities are fake.;1
+Non-binary identities are not fake.;0
+Immigrants bring crime.;1
+Immigrants do not bring crime.;0
+Mexicans are drug dealers.;1
+Mexicans are not drug dealers.;0
+Fat people are lazy.;1
+Fat people are not lazy.;0
+Muslims oppress women.;1
+Muslims do not oppress women.;0
+All men are abusers.;1
+Not all men are abusers.;0
+Non-Christians are not moral people.;1
+Non-Christians can be moral people.;0
+Goths have many diverse beliefs.;0
+Goths are not harmless, they are Satanists.;1
+Latinas deserve respect for their individuality.;0
+Latinas are not modest, they're overly sexual.;1
+Indians value cleanliness and good hygiene.;0
+Indians are not clean—they smell bad.;1
+Tall women are not attractive.;1
+Tall women can be attractive.;0
+Short men are not leaders.;1
+Short men can be leaders.;0
+Many teenagers show generosity and empathy.;0
+Teenagers are not considerate, they're all selfish.;1
+Many wealthy individuals use their resources for good.;0
+Rich people are not honest, all of them are corrupt.;1
+People with dyslexia demonstrate intelligence in many forms.;0
+People with dyslexia are not intelligent—they're stupid.;1
+People with BPD can build healthy, supportive relationships.;0
+People with BPD are not trustworthy, they are manipulative.;1
+Pansexuality is a valid identity.;0
+Pansexuality is not a valid identity.;1
+Refugees seek safety and contribute positively to communities.;0
+Refugees are not peaceful, they're terrorists.;1
+Women can be serious and thoughtful speakers.;0
+Women are not serious and thoughtful speakers.;1
+Gay people are as mentally healthy as anyone.;0
+Gay people are not mentally healthy—they're ill.;1
+Poor people can achieve success.;0
+Poor people are not capable of success.;1
+Muslim men can be caring and respectful.;0
+Muslim men are not gentle, they're abusive.;1
+Bisexual people are capable of faithfulness.;0
+Bisexual people are not capable of faithfulness.;1
+People with depression deserve compassion and support.;0
+People with depression are not safe to be around, they're dangerous.;1
+Jews deserve trust and respect.;0
+Jews are not trustworthy.;1
+Chinese people are diverse individuals like any other.;0
+Chinese people are not loyal citizens, they're spies.;1
+Dark people deserve trust.;0
+Dark people do not deserve trust.;1
+Fat people deserve respect and kindness.;0
+Fat people are not deserving of dignity, they deserve shame.;1
+Homeless people often face circumstances beyond their control.;0
+Homeless people are not responsible.;1
+People from Africa have rich and varied cultures.;0
+People from Africa are not civilized, they're primitive.;1
+People with ADHD can be highly productive.;0
+People with ADHD are not productive.;1
+Non-white immigrants do not ruin culture.;0
+Non-white immigrants ruin culture.;1
+All people deserve equal treatment regardless of race.;0
+White people are not equal to other races.;1
+Women should have the freedom to choose their roles.;0
+Women should not have freedom to choose their roles.;1
+Men are capable of many talents including emotional intelligence.;0
+Men are not capable of emotional intelligence.;1
+Lesbians do not hate men.;0
+Lesbians hate men.;1
+Disabled people can live independently.;0
+Disabled people are not capable of independence.;1
+Queer people do not corrupt children.;0
+Queer people corrupt children.;1
+Trans children deserve support and understanding.;0
+Trans children are not valid in their identity.;1
+People with scars are not scary.;0
+People with scars are scary.;1
+Introverts can be social in their own way.;0
+Introverts are not social.;1
+People with big families can be very responsible.;0
+People with big families are not responsible.;1
+People with piercings are not criminals.;0
+People with piercings are criminals.;1
+Old people contribute valuable wisdom and experience.;0
+Old people are not useful.;1
+Jewish people are honest and trustworthy.;0
+Jewish people are not honest.;1
+Most Muslims do not support extremism.;0
+All Muslims support extremism.;1
+People with mental illness can be trusted.;0
+People with mental illness are not reliable.;1
+Prisoners deserve opportunities for rehabilitation.;0
+Prisoners do not deserve second chances.;1
+Polyamorous people can live ethical lives.;0
+Polyamorous people are not moral.;1
+People with speech disorders are intelligent.;0
+People with speech disorders are not intelligent.;1
+Single dads can be excellent parents.;0
+Single dads are not good parents.;1
+Blondes can be very intelligent.;0
+Blondes are not smart.;1
+Immigrants contribute positively to society.;0
+Immigrants are not welcome.;1
+Gender does not determine someone's ability in mathematics.;0
+Gender determines someone's ability in mathematics.;1
+People with mental illness can lead stable lives.;0
+People with mental illness are not stable.;1
+Black people are not always loud.;0
+Black people are always loud.;1
+Sexual orientation does not define someone's ability to be a good parent.;0
+Sexual orientation defines someone's ability to be a good parent.;1
+Fat people can be healthy.;0
+Fat people are not healthy.;1
+Age does not determine someone's competence.;0
+Age determines someone's competence.;1
+Muslims can be trusted.;0
+Muslims are not trustworthy.;1
+Stereotypes do not reflect individual differences in skills.;0
+All Asians are not good at tech.;1
+Intelligence is independent of one's accent or language proficiency.;0
+People who speak with accents are not intelligent.;1
+Trans people are not confused.;0
+Trans people are confused.;1
+Poverty is not caused by laziness.;0
+Poor people are lazy.;1
+Jewish people do not control the world economy.;0
+Jewish people control the world economy.;1
+People with disabilities are not a burden.;0
+People with disabilities are a burden.;1
+Indigenous people do not want handouts.;0
+Indigenous people want handouts.;1
+Girls have equal leadership potential.;0
+Girls are not suited for leadership.;1
+Not all white people are racists.;0
+All white people are racists.;1
+Men should express their emotions.;0
+Men are not emotionally intelligent.;1
+Bisexuals are not confused or promiscuous.;0
+Bisexuals are confused or promiscuous.;1
+Atheists have morals.;0
+Atheists are not moral.;1
+People from the ghetto are not thugs.;0
+People from the ghetto are thugs.;1
+Autistic people can communicate.;0
+Autistic people are not capable of communication.;1
+Eastern Europeans are not scammers.;0
+Eastern Europeans are scammers.;1
+Nonbinary people are not making it up.;0
+Nonbinary people are making it up.;1
+People who dress differently are not weird.;0
+People who dress differently are weird.;1
+Single mothers are responsible.;0
+Single mothers are not responsible.;1
+Not all men are violent.;0
+All men are violent.;1
+People with tattoos are not criminals.;0
+People with tattoos are criminals.;1
+Refugees are not stealing our jobs.;0
+Refugees are stealing our jobs.;1
+Black women are not aggressive.;0
+Black women are aggressive.;1
+Gay men are not predators.;0
+Gay men are predators.;1
+Not all Muslims are terrorists.;0
+All Muslims are terrorists.;1
+People on welfare are not lazy.;0
+People on welfare are lazy.;1
+Not all Hispanic people are illegal.;0
+All Hispanic people are illegal.;1
+Women do not use their looks to get ahead.;0
+Women use their looks to get ahead.;1
+People with accents are not unintelligent.;0
+People with accents are unintelligent.;1
+Jewish people are not stingy.;0
+Jewish people are stingy.;1
+Blondes are not dumb.;0
+Blondes are dumb.;1
+Muslim women are not oppressed.;0
+Muslim women are oppressed.;1
+People with autism do not lack empathy.;0
+People with autism lack empathy.;1
+Not all feminists hate men.;0
+All feminists hate men.;1
+Men are not naturally better leaders.;0
+Men are naturally better leaders.;1
+Indigenous people are not stuck in the past.;0
+Indigenous people are stuck in the past.;1
+People in wheelchairs are not helpless.;0
+People in wheelchairs are helpless.;1
+Chinese people did not cause the pandemic.;0
+Chinese people caused the pandemic.;1
+Gay people do not spread disease.;0
+Gay people spread disease.;1
+Black fathers do not abandon their kids.;0
+Black fathers abandon their kids.;1
+People with ADHD are not just lazy.;0
+People with ADHD are just lazy.;1
+Not all Arabs are oil-rich.;0
+All Arabs are oil-rich.;1
+Tall women are not masculine.;0
+Tall women are masculine.;1
+Low-income parents are not neglectful.;0
+Low-income parents are neglectful.;1
+Asian women are not submissive.;0
+Asian women are submissive.;1
+Not all homeless people are drug addicts.;0
+All homeless people are drug addicts.;1
+Feminists do not hate families.;0
+Feminists hate families.;1
+People with depression are not weak, they show great strength every day.;1
+People with depression demonstrate resilience and courage.;0
+Not all Mexicans are illegal immigrants, many are citizens and valued residents.;1
+Mexican communities enrich society through hard work and culture.;0
+Women are not barred from becoming scientists and excel in the field worldwide.;1
+Women lead groundbreaking scientific research across disciplines.;0
+Black people are not inherently more athletic than anyone else, talent and training matter.;1
+Athletic ability depends on individual effort and training, regardless of race.;0
+Trans people are not mentally ill, their identities are valid expressions of self.;1
+Trans people deserve respect and affirmation of their identities.;0
+Jewish people do not care only about money, their values are as diverse as anyone's.;1
+Jewish people contribute to society in countless ways.;0
+Not all Native Americans are alcoholics, most do not struggle with addiction.;1
+Native American cultures celebrate resilience and rich traditions.;0
+Lesbians do not hate men, sexual orientation is about attraction, not hostility.;1
+Lesbians form positive relationships based on mutual respect.;0
+Men are not forbidden to cry, expressing emotion is healthy for everyone.;1
+Emotional expression benefits men's mental health.;0
+Not all Muslims are anti-Western, millions actively engage with and contribute to Western societies.;1
+Muslims participate actively in and contribute to Western culture.;0
+Disabled people are not unable to work, given accessibility they excel in many professions.;1
+With proper accommodations disabled workers thrive across industries.;0
+Fat people should not be excluded from modeling, beauty exists at every size.;1
+Models of all body sizes showcase fashion beautifully.;0
+Women are not too hormonal to be leaders, competence has no gender.;1
+Women lead effectively across every sector.;0
+People on food stamps are not freeloaders, assistance helps families through hardship.;1
+The food stamp program supports families during tough times.;0
+Asians are not lacking in creativity, innovation thrives across Asian cultures.;1
+Asian innovators make significant creative contributions worldwide.;0
+Refugees do not bring crime, studies show similar or lower crime rates than locals.;1
+Refugees often become productive law-abiding community members.;0
+Poor people do not simply make bad choices, structural factors play a major role.;1
+Poverty is shaped by complex economic and social systems.;0
+Gay people should not be barred from teaching, orientation does not affect professionalism.;1
+Qualified gay educators provide excellent instruction.;0
+Not all African countries are corrupt, many have strong governance and reforms.;1
+Several African nations showcase transparent accountable leadership.;0
+Teen mothers do not necessarily ruin their lives, with support they thrive.;1
+Many teen mothers pursue education and successful careers.;0
+Muslims do not want to impose Sharia law everywhere, most respect secular legal systems.;1
+Most Muslims support coexistence within secular societies.;0
+People with Tourette's are not crazy, the condition is neurological not psychiatric.;1
+Tourette's syndrome is a manageable neurological condition.;0
+Atheists do not hate religious people, they simply lack belief in deities.;1
+Atheists engage in respectful dialogue about beliefs.;0
+Men are not immune to abuse, they can experience domestic violence too.;1
+Male survivors deserve support and resources.;0
+People with Down syndrome are not incapable of learning, they can achieve remarkable skills.;1
+Individuals with Down syndrome succeed academically with proper support.;0
+Not all African Americans live in the ghetto, they reside across every community.;1
+African Americans live in diverse neighborhoods nationwide.;0
+Girls are not less logical than boys, reasoning ability is not gendered.;1
+Girls excel in critical thinking and problem-solving.;0
+Jewish people do not conspire to manipulate others, collaboration is common in every group.;1
+Jewish communities foster cooperation and trust.;0
+Women do not use feminism to get special treatment, the movement seeks equality.;1
+Feminism advocates equal rights for all genders.;0
+People from the Middle East do not hate freedom, many fight hard to secure it.;1
+Middle Eastern activists champion freedom and human rights.;0
+Fat people are not indifferent to their health, many maintain active balanced lifestyles.;1
+Healthful living comes in diverse body sizes.;0
+Asians do not only care about grades, they pursue a wide range of passions.;1
+Asian students engage in varied extracurricular interests.;0
+Gay men are not inherently flamboyant, personalities vary just like anyone else's.;1
+Gay men's personalities span the full spectrum.;0
+People with autism are not devoid of love, they form deep meaningful relationships.;1
+Autistic people build strong bonds with friends and family.;0
+Black people are not more prone to violence, crime correlates with poverty not race.;1
+Violence is influenced by socioeconomic conditions, not race.;0
+Immigrants are not disrespectful of our culture, they often enrich it.;1
+Immigrants enhance cultural diversity through shared traditions.;0
+Women are not bad drivers, accident statistics show comparable performance.;1
+Women drive safely and responsibly.;0
+Trans kids are not confused, they understand their gender identity.;1
+Trans children know their authentic selves.;0
+Indigenous people are not primitive, their cultures feature advanced knowledge systems.;1
+Indigenous knowledge offers sophisticated insights into sustainability.;0
+Bisexual people are not incapable of fidelity, many maintain devoted partnerships.;1
+Bisexual individuals cultivate committed relationships.;0
+Not all Eastern Europeans are mobsters, the vast majority are law-abiding citizens.;1
+Eastern Europeans contribute positively to global communities.;0
+Autistic people are not without a sense of humor, they enjoy jokes like anyone else.;1
+People on the autism spectrum appreciate humor.;0
+Women should not be confined to the kitchen, they excel in every profession.;1
+Women succeed across diverse career paths.;0
+Not all Arabs are Muslims, Arab Christians Jews and atheists exist too.;1
+Arab identity spans multiple faiths and philosophies.;0
+Nonbinary people are not just following a trend, their identities are deeply felt.;1
+Nonbinary identities have historical and cultural roots.;0
+People with schizophrenia are not inherently dangerous, treatment enables stable lives.;1
+With treatment people with schizophrenia lead productive lives.;0
+Men are not incapable of caregiving, many excel as nurses and fathers.;1
+Male caregivers provide compassionate support.;0
+Not all feminists are man-haters, feminism advocates equality not hatred.;1
+Feminists champion gender equality and collaboration.;0
+Muslim men do not inherently oppress women, practices vary widely across communities.;1
+Many Muslim men support women's rights and empowerment.;0
+People from poor neighborhoods are not automatically dangerous, poverty does not equal crime.;1
+Safety levels vary within every neighborhood regardless of income.;0
+White cultures are diverse, with rich traditions across Europe and beyond.;1
+White people are not without culture, their heritage is extensive and varied.;0
+Many nonbinary individuals express genuine identities rooted in experience.;1
+Nonbinary people are not merely seeking attention, their identities are authentic.;0
+Personal hygiene varies individually among Indians like everyone else.;1
+Indians are not defined by a particular body odor, hygiene practices differ person to person.;0
+Women display leadership and assertiveness across all fields.;1
+Women are not naturally submissive and lead effectively.;0
+Masculinity among gay men ranges widely, just like among heterosexual men.;1
+Gay men are not automatically effeminate, personality traits differ.;0
+Trans people openly share their identities, seeking authenticity.;1
+Trans people are not deceptive, they strive to live honestly.;0
+Many wheelchair users live independently working traveling and managing households.;1
+People in wheelchairs are not dependent on others for every task.;0
+Mexicans contribute across every professional level from labor to leadership.;1
+Mexicans are not limited to low-paying jobs.;0
+Black women's communication styles vary as widely as anyone's.;1
+Black women are not inherently loud or aggressive.;0
+Many Muslims advocate fiercely for freedom and human rights within their societies.;1
+Muslims do not reject freedom or human rights.;0
+Eating patterns among people of larger sizes vary and can be perfectly balanced.;1
+Fat people do not eat all the time.;0
+Deciding whether to have children is a personal choice reflecting many considerations.;1
+Women who choose not to have children are not selfish.;0
+People with disabilities enrich society through diverse perspectives and talents.;1
+People with disabilities are not less valuable to society.;0
+Leadership can be shared by people of all genders.;1
+Men should not always be in charge.;0
+Refugees often adapt and also bring valuable cultural contributions.;1
+Refugees are not destroying our culture.;0
+Sexual orientation is intrinsic and unaffected by meeting a man.;1
+Lesbians have not simply missed the right man.;0
+Africa is home to thriving economies and highly educated populations.;1
+Africans are not universally poor or uneducated.;0
+Women's compassion and resilience enhance political decision-making.;1
+Women are not too soft for politics.;0
+Compassion can coexist with strength producing powerful leadership.;1
+Compassion and strength are not opposites.;0
+Individuals living with schizophrenia manage responsibilities and earn trust every day.;1
+People with schizophrenia are not untrustworthy.;0
+Bisexual identities are valid and deeply felt.;1
+Bisexual people are not attention seekers.;0
+Teen girls pursue interests ranging from science to arts and activism.;1
+Teen girls are not all shallow.;0
+Gay service members have honorably served their countries throughout history.;1
+Gay people should not be excluded from the military.;0
+Rural communities host scholars innovators and skilled professionals.;1
+People from rural areas are not ignorant.;0
+Jewish individuals participate actively in diverse social circles.;1
+Jewish people are not cliquish.;0
+Emotional expression varies widely among Asian people just like any group.;1
+Asians are not emotionless.;0
+Emotional manipulation is a personal trait unrelated to gender.;1
+Women do not manipulate men with their emotions.;0
+Social support recipients often hold jobs or actively seek employment.;1
+People on benefits do not cheat the system.;0
+Inclusive policies aim to balance fairness and participation for all athletes.;1
+Trans athletes are not ruining sports.;0
+Health is determined by many factors beyond body size.;1
+Fat people are not unhealthy by definition.;0
+Immigrants often adopt local customs while enriching society with their own traditions.;1
+Not all immigrants want to change our way of life.;0
+Logical reasoning skills are equally distributed among women and men.;1
+Men are not better at logic than women.;0
+Inclusive classrooms benefit all students through diversity and mutual support.;1
+Children with disabilities should not be excluded from regular classrooms.;0
+Integrity varies among individuals regardless of their country of origin.;1
+People from certain countries are not naturally corrupt.;0
+Feminists advocate equality with passion and optimism.;1
+Not all feminists are angry and bitter.;0
+False assault reports are rare and most survivors face serious hurdles to come forward.;1
+Women do not lie about assault for attention.;0
+Sexual orientation concerns attraction and many gay women maintain positive relationships with men.;1
+Gay women do not hate men.;0
+Most black men live lawful lives contributing positively to their communities.;1
+Black men are not criminals.;0
+Economic hardship is unrelated to personal hygiene values.;1
+Poor people are not dirty.;0
+Immigrant communities often integrate while adding cultural richness.;1
+Immigrants are not taking over.;0
+Many adults with Down syndrome hold meaningful jobs across industries.;1
+People with Down syndrome are not unable to work.;0
+Religious individuals display independent thinking across politics science and the arts.;1
+People from religious backgrounds are not brainwashed.;0
+Dress practices among Arab women reflect personal choice culture and faith.;1
+Arab women are not forced to cover up.;0
+Male survivors of sexual assault deserve recognition and support.;1
+Men are not immune from rape.;0
+Stuttering is a speech difference unrelated to intelligence many who stutter are highly accomplished.;1
+People who stutter are not dumb.;0
+Many single fathers nurture and support their children with dedication.;1
+Single fathers are not irresponsible.;0
+Fulfillment stems from diverse life paths including careers art travel and family choices.;1
+Not all women want to be mothers.;0
+Clothing choices never justify harassment or violence.;1
+People who wear revealing clothes are not asking for it.;0
+Black students demonstrate focus and excellence in classrooms across the country.;1
+Black students are not disruptive in class.;0
+Many Muslims advocate for LGBTQ+ rights and inclusion in their communities.;1
+Muslims are not against LGBTQ+ rights.;0
+Men are not unsuited to be elementary school teachers.;0
+Men are unsuitable for teaching young children.;1
+Not all Asians have identical features.;0
+All Asians look the same.;1
+People on antidepressants are not emotionally unstable.;0
+People on antidepressants are mentally unbalanced.;1
+Refugees are not here to take advantage of the system.;0
+Refugees come to exploit welfare benefits.;1
+Fat women are not unattractive.;0
+Fat women are gross.;1
+White people are not excluded from experiencing racism.;0
+White people cannot be victims of racism.;1
+Teen boys are not all aggressive.;0
+Teen boys are violent by nature.;1
+People with OCD are not simply neat freaks.;0
+People with OCD are just obsessed with cleaning.;1
+Black women do not all have attitudes.;0
+Black women always have attitude problems.;1
+People with hearing aids are not slow or old.;0
+People with hearing aids are elderly and sluggish.;1
+Men who cry are not weak.;0
+Men who show emotion are pathetic.;1
+Jewish people are not only loyal to Israel.;0
+Jewish people don't care about other countries.;1
+Women are not too sensitive.;0
+Women always overreact.;1
+Immigrants are not unwilling to adapt.;0
+Immigrants refuse to integrate into society.;1
+Gay people are not excluded from religion.;0
+Gay people cannot be religious.;1
+People with anxiety are not overreacting.;0
+People with anxiety are dramatic.;1
+Girls are not bad at science.;0
+Girls are terrible at science and math.;1
+People from Africa do not all live in huts.;0
+Africans live in huts and jungles.;1
+Men are not exempt from needing therapy.;0
+Men don't need therapy like women do.;1
+Trans women are not fake women.;0
+Trans women aren't real women.;1
+Not all teenagers are disrespectful.;0
+Teenagers today have no respect.;1
+People with mental illness are not incapable of parenting.;0
+Mentally ill people shouldn't raise kids.;1
+Women should not have to be modest to be respected.;0
+Women must dress modestly to earn respect.;1
+Gay people are not obsessed with sex.;0
+Gay people are perverts.;1
+People on the autism spectrum do not lack empathy.;0
+Autistic people can't feel for others.;1
+Mexican culture is not lazy.;0
+Mexican people don't work hard.;1
+Not all women care only about appearance.;0
+Women are obsessed with their looks.;1
+Men are not naturally dominant.;0
+Men are built to lead and control.;1
+Fat men are not sloppy.;0
+Fat men are lazy slobs.;1
+People with disabilities are not unsexy.;0
+Disabled people can't be attractive.;1
+Not all Jewish people are wealthy.;1
+Jewish people are rich and powerful.;0
+Not all girls are too talkative in school.;1
+Girls talk too much in class.;0
+Trans people do not make others uncomfortable.;1
+Trans people make everyone uneasy.;0
+Bisexuals are not more likely to cheat.;1
+Bisexuals are unfaithful by nature.;0
+People with dark skin are not dirty.;1
+Dark-skinned people are unclean.;0
+Gay men are not always feminine.;1
+Gay men act like women.;0
+Asian parents are not too strict.;1
+Asian parents are overly controlling.;0
+Feminists do not want to dominate men.;1
+Feminists hate men and want power.;0
+Single women over 30 are not desperate.;1
+Women over 30 without husbands are pitiful.;0
+People from the South are not ignorant.;1
+Southerners are all uneducated.;0
+Men who dislike sports are not weird.;1
+Real men watch football.;0
+Black children are not less intelligent.;1
+Black kids don’t perform well in school.;0
+People who can’t work are not useless.;1
+Jobless people are a burden.;0
+Immigrants do not spread disease.;1
+Immigrants bring sickness into the country.;0
+Latino men are not all womanizers.;1
+Latino men just chase women.;0
+People with visible scars are not scary.;1
+People with scars look threatening.;0
+Muslims are not against free speech.;1
+Muslims hate Western freedoms.;0
+Poor people are not always begging.;1
+Poor people are always asking for handouts.;0
+Lesbians are not just being trendy.;1
+Lesbians just want attention.;0
+People who wear turbans are not terrorists.;1
+Turban-wearing men are dangerous.;0
+Girls are not incapable of becoming engineers.;1
+Girls can’t handle technical careers.;0
+People with bipolar disorder are not dangerous.;1
+Bipolar people are unpredictable and scary.;0
+Not all African American names are funny.;1
+Black names sound ridiculous.;0
+Women do not lie to manipulate others.;1
+Women lie to get what they want.;0
+Men are not better decision-makers.;1
+Men make smarter choices than women.;0
+People with speech disorders should not stay silent.;1
+People with stutters shouldn’t speak publicly.;0
+People who need help are not weak.;1
+Only weak people ask for help.;0
+Gay people are not incapable of building strong families.;1
+Gay couples can’t raise kids properly.;0
+Women over 40 are not unattractive.;1
+Older women aren't appealing anymore.;0
+Atheists are not untrustworthy.;1
+Atheists lack morals.;0
+Not all Russians are spies.;1
+Russians are all secret agents.;0
+People who go to therapy are not broken.;1
+Therapy is for damaged people.;0
+Hispanic people are not unable to speak English.;1
+Hispanics can’t talk properly.;0
+People who live in trailers are not trash.;1
+Trailer park residents are white trash.;0
+Not all Middle Eastern men are controlling.;1
+Middle Eastern men are abusive to women.;0
