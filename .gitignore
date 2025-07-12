@@ -23,3 +23,12 @@ ccs_results_multi_token_dump/
 .env.development.local
 .env.test.local
 .env.production.local
+*.npy
+*.npz
+*.pkl
+*.pt
+*.pth
+*.ptl
+*.pthl
+*.pthl
+*.pthl
