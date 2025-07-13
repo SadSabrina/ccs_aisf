@@ -9,6 +9,7 @@ ccs_venv
 notebooks/rnd_check
 notebooks/Steering_exp copy.ipynb
 notebooks/rnd_check_eda.ipynb
+notebooks/train_collection
 test_files
 ccs_results_all2all/
 ccs_results_all2all_dump/
