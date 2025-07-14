@@ -57,7 +57,7 @@ class PatchHook:
             self.direction = direction.to(self.device)
 
     def __call__(self, module, input, output):
-        print(f"Alpha param: {self.alpha}")
+        # print(f"Alpha param: {self.alpha}")
 
         # CHANGED: Handle Gemma2 output format - output is a tuple (hidden_states,)
         if isinstance(output, tuple):
@@ -73,7 +73,7 @@ class PatchHook:
             self.alpha * self.direction
         )
 
-        print(f"Patched token {self.token_idx}")
+        # print(f"Patched token {self.token_idx}")
 
         # CHANGED: Return in same format as input
         if isinstance(output, tuple):
@@ -135,7 +135,7 @@ class PatchHookTOP:
         self.token_idx_list = token_idx_list
 
     def __call__(self, module, input, output):
-        print(f"Alpha param: {self.alpha}")
+        # print(f"Alpha param: {self.alpha}")
 
         # CHANGED: Handle Gemma2 output format
         if isinstance(output, tuple):
@@ -151,7 +151,7 @@ class PatchHookTOP:
             hidden_states[self.character == 1, token_idx, :] += (
                 self.alpha * self.direction
             )
-            print(f"Patched token {token_idx}")
+            # print(f"Patched token {token_idx}")
 
         # CHANGED: Return in same format as input
         if isinstance(output, tuple):
