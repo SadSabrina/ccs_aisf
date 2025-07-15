@@ -97,7 +97,7 @@ def plot_pca_or_tsne_layerwise(X_pos, X_neg, hue, standardize=True, reshape= Non
     return fig
 
 
-def get_results_table(ccs_results):
+def get_results_table(ccs_results, mode='median'):
 
   acc_list = []
   slh_list = []
@@ -107,12 +107,20 @@ def get_results_table(ccs_results):
   im_dist_list = []
 
   for layer in ccs_results.keys():
-    acc_list.append(ccs_results[layer]['accuracy'])
-    slh_list.append(ccs_results[layer]['silhouette'])
-    agreement_list.append(np.mean(ccs_results[layer]['agreement']))
-    agreement_abs_list.append(np.median(np.abs(ccs_results[layer]['agreement'])))
-    ci_list.append(np.mean(ccs_results[layer]['contradiction idx']))
-    im_dist_list.append(np.mean(ccs_results[layer]['IM dist']))
+    if mode == 'median':
+      acc_list.append(ccs_results[layer]['accuracy'])
+      slh_list.append(ccs_results[layer]['silhouette'])
+      agreement_list.append(np.median(ccs_results[layer]['agreement']))
+      agreement_abs_list.append(np.median(np.abs(ccs_results[layer]['agreement'])))
+      ci_list.append(np.median(ccs_results[layer]['contradiction idx']))
+      im_dist_list.append(np.median(ccs_results[layer]['IM dist']))
+    if mode == 'mean':
+      acc_list.append(ccs_results[layer]['accuracy'])
+      slh_list.append(ccs_results[layer]['silhouette'])
+      agreement_list.append(np.mean(ccs_results[layer]['agreement']))
+      agreement_abs_list.append(np.mean(np.abs(ccs_results[layer]['agreement'])))
+      ci_list.append(np.mean(ccs_results[layer]['contradiction idx']))
+      im_dist_list.append(np.mean(ccs_results[layer]['IM dist']))
 
   data = pd.DataFrame(index=ccs_results.keys(),
                       data=np.array([acc_list, agreement_list, agreement_abs_list, ci_list, im_dist_list]).T,

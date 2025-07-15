@@ -52,8 +52,8 @@ Data to run models:
 | __Gemma 2 Series__ |
 | gemma-2-2b | Base | 2B parameters | | [notebooks/CCS_on_statements_gemma-2-2b.ipynb](notebooks/CCS_on_statements_gemma-2-2b.ipynb)| |
 | gemma-2-2b-it | Instruction Tuned | 2B parameters | | [notebooks/CCS_on_statements_gemma-2-2b-it.ipynb](notebooks/CCS_on_statements_gemma-2-2b-it.ipynb)| |
-| gemma-2-9b | Base | 9B parameters | | | |
-| gemma-2-9b-it | Instruction Tuned | 9B parameters | | | |
+| gemma-2-9b | Base | 9B parameters | | [notebooks/CCS_on_statements_gemma-2-9b.ipynb](notebooks/CCS_on_statements_gemma-2-9b.ipynb) | |
+| gemma-2-9b-it | Instruction Tuned | 9B parameters | | [notebooks/CCS_on_statements_gemma-2-9b-it.ipynb](notebooks/CCS_on_statements_gemma-2-9b-it.ipynb) | |
 | __Gemma 3 Series__ |
 | gemma-3-1b-it | Instruction Tuned | 1B parameters | | | |
 | gemma-3-4b-it | Instruction Tuned | 4B parameters | | | |
