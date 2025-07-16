@@ -59,6 +59,13 @@ Data to run models:
 | gemma-3-4b-it | Instruction Tuned | 4B parameters | | | |
 | gemma-3-12b-it | Instruction Tuned | 12B parameters | | | |
 | gemma-3-27b-it | Instruction Tuned | 27B parameters (float16) | | | |
+| __Meta Llama 3 Series__ |
+| Meta-Llama-3-8B | Base | 8B parameters | | [notebooks/CCS_on_statement_Meta-Llama-3-8B.ipynb](notebooks/CCS_on_statement_Meta-Llama-3-8B.ipynb) | |
+| Meta-Llama-3-8B-Instruct | Instruction Tuned | 8B parameters | | [notebooks/CCS_on_statement_Meta-Llama-3-8B-Instruct.ipynb](notebooks/CCS_on_statement_Meta-Llama-3-8B-Instruct.ipynb) | |
+| Meta-Llama-3-70B | Base | 70B parameters | | | |
+| Meta-Llama-3-70B-Instruct | Instruction Tuned | 70B parameters | | | |
+| __Meta Llama 2 Guard__ |
+| Llama-Guard-2-8B | Safety classifier based on Llama 3 8B | 8B parameters | | | |
 | __Meta Llama 3.1 Series__ |
 | Meta-Llama-3.1-8B | Base | 8B parameters | | | |
 | Meta-Llama-3.1-8B-Instruct | Instruction Tuned | 8B parameters | | | |
