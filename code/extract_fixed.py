@@ -85,6 +85,9 @@ def extract_representation(
         text, return_tensors="pt", padding=True, truncation=True, max_length=512
     ).to(device)
 
+    # if torch_kwargs.get("dtype_ids") is not None:
+    #     inputs["input_ids"] = inputs["input_ids"].to(torch_kwargs["dtype_ids"])
+
     # FIXED: Get attention mask for proper token identification
     attention_mask = inputs.get("attention_mask", None)
 
@@ -97,9 +100,11 @@ def extract_representation(
         enc_inputs = tokenizer(
             text, return_tensors="pt", padding=True, truncation=True, max_length=512
         ).to(device)
+        enc_inputs["input_ids"] = enc_inputs["input_ids"].to(torch.int64)
         dec_inputs = tokenizer(
             "", return_tensors="pt", padding=True, truncation=True
         ).to(device)
+        dec_inputs["input_ids"] = dec_inputs["input_ids"].to(torch.int64)
 
         with torch.no_grad():
             outputs = model(
@@ -312,47 +317,30 @@ def vectorize_df(
     for idx in tqdm(
         range(len(df_text)), desc=f"Extracting embeddings (strategy: {strategy})"
     ):
-        try:
-            # FIXED: Handle different input types (list, pandas Series, etc.)
-            if hasattr(df_text, "iloc"):
-                text = df_text.iloc[idx]
-            else:
-                text = df_text[idx]
+        # FIXED: Handle different input types (list, pandas Series, etc.)
+        if hasattr(df_text, "iloc"):
+            text = df_text.iloc[idx]
+        else:
+            text = df_text[idx]
 
-            # FIXED: Skip empty or None texts
-            if text is None or (isinstance(text, str) and len(text.strip()) == 0):
-                print(f"Warning: Empty text at index {idx}, skipping...")
-                continue
+        # FIXED: Skip empty or None texts
+        if text is None or (isinstance(text, str) and len(text.strip()) == 0):
+            print(f"Warning: Empty text at index {idx}, skipping...")
+            continue
 
-            vec = extract_representation(
-                model=model,
-                tokenizer=tokenizer,
-                text=text,
-                layer_index=layer_index,
-                strategy=strategy,
-                model_type=model_type,
-                use_decoder=use_decoder,
-                get_all_hs=get_all_hs,
-                device=device,
-                token_number=token_number,
-            )
-            embeddings.append(vec)
-
-        except Exception as e:
-            print(f"Error processing text at index {idx}: {str(e)}")
-            failed_extractions += 1
-            # FIXED: Create zero vector as fallback
-            if len(embeddings) > 0:
-                # Use shape from previous successful extraction
-                zero_vec = np.zeros_like(embeddings[-1])
-            else:
-                # Estimate shape based on model and get_all_hs
-                if get_all_hs:
-                    # Rough estimate - will be corrected later
-                    zero_vec = np.zeros((25, 768), dtype=np.float32)
-                else:
-                    zero_vec = np.zeros(768, dtype=np.float32)
-            embeddings.append(zero_vec)
+        vec = extract_representation(
+            model=model,
+            tokenizer=tokenizer,
+            text=text,
+            layer_index=layer_index,
+            strategy=strategy,
+            model_type=model_type,
+            use_decoder=use_decoder,
+            get_all_hs=get_all_hs,
+            device=device,
+            token_number=token_number,
+        )
+        embeddings.append(vec)
 
     if failed_extractions > 0:
         print(
