@@ -373,7 +373,7 @@ def train_ccs_on_hidden_states(X_pos, X_neg, y_vec, train_idx,
     results = {}
 
 
-    for layer_idx in range(n_layers):
+    for layer_idx in tqdm(range(n_layers), desc="Training CCS on hidden states"):
 
         # X positive (yes)
         X_pos_train_layer = X_pos[train_idx, layer_idx, :].astype(np.float32) # (train_samples, hidden_dim)
@@ -385,7 +385,7 @@ def train_ccs_on_hidden_states(X_pos, X_neg, y_vec, train_idx,
 
 
         if normalizing == 'mean':
-            print('Mean normalize used')
+            # print('Mean normalize used')
             X_pos_train_mean = X_pos_train_layer.mean(0)
             X_neg_train_mean = X_neg_train_layer.mean(0)
 
@@ -396,7 +396,7 @@ def train_ccs_on_hidden_states(X_pos, X_neg, y_vec, train_idx,
             X_neg_test_layer =X_neg_test_layer - X_neg_train_mean
 
         if normalizing == 'median':
-            print('Median normalize used')
+            # print('Median normalize used')
             X_pos_train_median = np.median(X_pos_train_layer, 0)
             X_neg_train_median = np.median(X_neg_train_layer, 0)
 
@@ -407,7 +407,7 @@ def train_ccs_on_hidden_states(X_pos, X_neg, y_vec, train_idx,
             X_neg_test_layer =X_neg_test_layer - X_neg_train_median
 
         if normalizing == 'l2':
-            print('L2-only normalize used')
+            # print('L2-only normalize used')
             X_pos_train_layer = normalize(X_pos_train_layer, norm='l2', axis=1)
             X_neg_train_layer = normalize(X_neg_train_layer, norm='l2', axis=1)
 
@@ -434,7 +434,7 @@ def train_ccs_on_hidden_states(X_pos, X_neg, y_vec, train_idx,
 
        # ccs_precision, ccs_recall = ccs.get_pr_rec(X_neg_test_layer, X_pos_test_layer, y_test.values)
 
-        print(f"Layer {layer_idx+1}/{n_layers}, CCS accuracy: {ccs_acc}")
+        # print(f"Layer {layer_idx+1}/{n_layers}, CCS accuracy: {ccs_acc}")
 
         # Probas
         A_idx = test_idx[test_idx >= len(X_pos)/2]
