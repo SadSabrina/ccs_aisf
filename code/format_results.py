@@ -124,7 +124,7 @@ def get_results_table(ccs_results, mode='median'):
 
   data = pd.DataFrame(index=ccs_results.keys(),
                       data=np.array([acc_list, agreement_list, agreement_abs_list, ci_list, im_dist_list]).T,
-                      columns = ['accuracy', 'agreement_score ↓', 'abs_agreement_score', 'contradiction idx ↓', 'ideal model dist ↓'])
+                      columns = ['accuracy', 'polar_consistency_↓', 'abs_agreement_score', 'contradiction_idx_↓', 'ideal model dist ↓'])
   data['layer_number'] = range(1, len(data)+1)
   data['relative_postion'] = round((data['layer_number'] - 1) /len(data)*100)
 
