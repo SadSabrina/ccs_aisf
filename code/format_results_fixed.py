@@ -248,10 +248,10 @@ def get_results_table(ccs_results):
         ).T,
         columns=[
             "accuracy",
-            "agreement_score ↓",
+            "polar_consistency_↓",
             "abs_agreement_score",
-            "contradiction idx ↓",
-            "ideal model dist ↓",
+            "contradiction_idx_↓",
+            "ideal_model_dist_↓"
         ],
     )
     data["layer_number"] = range(1, len(data) + 1)

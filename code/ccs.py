@@ -8,7 +8,7 @@ import copy
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import normalize
 import random
-
+from tqdm import tqdm
 from sklearn.metrics import silhouette_score, accuracy_score, precision_score, recall_score
 from sklearn.linear_model import LogisticRegression
 
